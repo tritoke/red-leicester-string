@@ -1,30 +1,97 @@
-use aho_corasick::{AhoCorasick, automaton::FindOverlappingIter};
+use std::borrow::Cow;
 
-struct SearchBuilder {
+use aho_corasick::AhoCorasick;
+
+use crate::codecs::{ALL_CODECS, Decoder};
+
+const MAX_FLAG_LENGTH: usize = 2000;
+const CLOSING_CHAR: u8 = b'}';
+
+pub struct Searcher {
     matcher: AhoCorasick,
+    decoders: Vec<Decoder>,
 }
 
-impl SearchBuilder {
-    fn new<I: IntoIterator<Item = P>, P: AsRef<[u8]>>(
+impl Searcher {
+    pub fn new<I: IntoIterator<Item = P>, P: AsRef<[u8]>>(
         patterns: I,
     ) -> Result<Self, aho_corasick::BuildError> {
-        matcher = AhoCorasick::new(patterns)?;
-        Ok(Self { matcher })
+        let (patterns, decoders) = Self::expand_patterns(patterns);
+        let matcher = AhoCorasick::new(patterns)?;
+
+        Ok(Self { matcher, decoders })
     }
 
-    fn search<'a, 'h, I: Into<Input<'h>>>(&self, input: I) {}
-}
+    fn expand_patterns<I: IntoIterator<Item = P>, P: AsRef<[u8]>>(
+        patterns: I,
+    ) -> (Vec<Box<[u8]>>, Vec<Decoder>) {
+        let mut encoded_patterns = vec![];
+        let mut decoders = vec![];
 
-fn search(
-    haystack: &'static [u8],
-) -> Result<impl Iterator<Item = &'static [u8]>, aho_corasick::BuildError> {
-    let matcher = AhoCorasick::new(patterns)?;
+        for pattern in patterns.into_iter() {
+            let pat = pattern.as_ref();
 
-    let matches = matcher
-        .find_overlapping_iter(haystack)
-        .map(|m| extend_match_till_null(haystack, m.span()));
+            for codec in ALL_CODECS {
+                let (encoded, decoder) = codec(pat);
+                encoded_patterns.push(encoded);
+                decoders.push(decoder);
+            }
+        }
 
-    Ok(matches)
+        assert_eq!(encoded_patterns.len(), decoders.len());
+        (encoded_patterns, decoders)
+    }
+
+    pub fn search<'a>(&self, haystack: &'a [u8]) -> impl Iterator<Item = Cow<'a, str>> {
+        self.matcher
+            .find_overlapping_iter(haystack)
+            .filter_map(|match_| {
+                let to_decode = &haystack
+                    [match_.start()..usize::min(haystack.len(), match_.end() + MAX_FLAG_LENGTH)];
+                self.decoders[match_.pattern().as_usize()](to_decode)
+            })
+            .map(|decoded| Self::postprocess_match(decoded))
+    }
+
+    fn postprocess_match<'a>(extended_match_data: Cow<'a, [u8]>) -> Cow<'a, str> {
+        // compute where is valid UTF8 / where the closing brace is via as_ref so we can the work is
+        // shared for each branch of the Cow's state
+        let haystack = extended_match_data.as_ref();
+        let utf8_valid_end = encoding_rs::Encoding::utf8_valid_up_to(haystack);
+        let closing_pos = memchr::memchr(CLOSING_CHAR, &haystack).unwrap_or(utf8_valid_end);
+
+        // closing_pos is incremented as utf8_valid_end is an index valid for [..<to>] style
+        // indexing but closing_pos is valid for [..=<to>] style indexing and this lets us use both
+        // in the same place
+        let truncate_to = usize::min(utf8_valid_end, closing_pos + 1);
+
+        match extended_match_data {
+            Cow::Borrowed(borrow) => {
+                // SAFETY: borrow must contain only valid UTF8 data as either:
+                // 1. we truncated to utf8_valid_end and thus all the data before this is utf8
+                // 2. we hit closing_pos, which is strictly shorter than utf8_valid_end and is a
+                //    unicode codepoint boundary and is thus safe to truncate to.
+                let flag: &'a str =
+                    unsafe { std::str::from_utf8_unchecked(&borrow[..truncate_to]) };
+
+                Cow::Borrowed(&flag)
+            }
+            Cow::Owned(mut owned) => {
+                // discard the invalid UTF8 data or until we see a closing brace
+                owned.resize(truncate_to, 0);
+
+                // not needed but we might as well I think
+                owned.shrink_to_fit();
+
+                // SAFETY: owned must contain only valid UTF8 data as either:
+                // 1. we truncated to utf8_valid_end and thus all the data before this is utf8
+                // 2. we hit closing_pos, which is strictly shorter than utf8_valid_end and is a
+                //    unicode codepoint boundary and is thus safe to truncate to.
+                let flag = unsafe { String::from_utf8_unchecked(owned) };
+                Cow::Owned(flag)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -34,11 +101,17 @@ mod tests {
 
     #[rstest]
     #[case("flag{", "flag{gimme_the_whole_flag}", "flag{gimme_the_whole_flag}")]
+    #[case("flag{", "flag{short} with some garbage after", "flag{short}")]
+    #[case("flag{", "and some trash before flag{short}", "flag{short}")]
     fn test_identity_match<P: AsRef<[u8]>>(
         #[case] pattern: P,
         #[case] haystack: P,
         #[case] correct: P,
     ) {
-        // search();
+        let searcher = Searcher::new([pattern]).unwrap();
+
+        let found: Vec<Cow<'_, str>> = searcher.search(haystack.as_ref()).collect();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].as_bytes(), correct.as_ref());
     }
 }

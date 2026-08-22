@@ -7,8 +7,13 @@ edition = "2024"
 aho-corasick = "1.1.5"
 base64 = "0.23.1"
 clap = { version = "4.6.6", features = ["derive"] }
-memchr = "2.8.3"
-mmap = "0.1.1"
+encoding_rs = { version = "0.8.35", default-features = false }
+memchr = { version = "2.8.3", default-features = false }
+memmap = "0.7.0"
 
 [dev-dependencies]
 rstest = "0.26.1"
+
+[[bin]]
+name = "stringcheese"
+path = "src/main.rs"

@@ -1,6 +1,8 @@
-use aho_corasick::{AhoCorasick, Span};
 use clap::Parser;
-use std::{ffi::OsString, path::PathBuf};
+use memmap::Mmap;
+use std::{fs::File, io::Write, path::PathBuf, process::ExitCode};
+
+mod codecs;
 
 mod searcher;
 use searcher::Searcher;
@@ -23,10 +25,26 @@ struct Args {
     verbose: bool,
 
     /// the pattern you want to search, e.g. FLAG{
-    patterns: Vec<OsString>,
+    patterns: Vec<String>,
 }
 
-fn main() {
+fn main() -> ExitCode {
     let args = Args::parse();
-    dbg!(args);
+
+    if args.patterns.is_empty() {
+        eprintln!("patterns cannot be empty, please provide at least one pattern to search from");
+        return ExitCode::FAILURE;
+    }
+
+    let file = File::open(args.file).expect("Failed to open file");
+    let mmap = unsafe { Mmap::map(&file) }.expect("Failed to mmap file");
+
+    let mut stdout = std::io::stdout().lock();
+    let searcher =
+        Searcher::new(args.patterns).expect("Failed to build aho-corasick matcher for patterns");
+    for flag in searcher.search(&mmap[..]) {
+        writeln!(stdout, "{}", flag.as_ref()).unwrap();
+    }
+
+    ExitCode::SUCCESS
 }
