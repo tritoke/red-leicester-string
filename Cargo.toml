@@ -1,0 +1,13 @@
+[package]
+name = "red-leicester-string"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+aho-corasick = "1.1.5"
+base64 = "0.23.1"
+clap = { version = "4.6.6", features = ["derive"] }
+mmap = "0.1.1"
+
+[dev-dependencies]
+rstest = "0.26.1"
