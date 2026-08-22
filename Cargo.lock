@@ -318,6 +318,7 @@ dependencies = [
  "aho-corasick",
  "base64",
  "clap",
+ "memchr",
  "mmap",
  "rstest",
 ]
