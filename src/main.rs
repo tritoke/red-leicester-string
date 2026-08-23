@@ -7,6 +7,8 @@ mod codecs;
 mod searcher;
 use searcher::Searcher;
 
+use crate::searcher::MatchDirection;
+
 /// Find flags automatically in CTF challenges.
 /// This looks for flags in the provided files using searches similar to strings+grep,
 /// but works even if the flag is transformed, e.g. encoded or xor-encrypted.
@@ -26,6 +28,9 @@ struct Args {
 
     /// the pattern you want to search, e.g. FLAG{
     patterns: Vec<String>,
+
+    /// the number of threads to use while searching
+    threads: Option<u32>,
 }
 
 fn main() -> ExitCode {
@@ -43,8 +48,14 @@ fn main() -> ExitCode {
         Searcher::new(args.patterns).expect("Failed to build aho-corasick matcher for patterns");
 
     let mut stdout = std::io::stdout().lock();
-    for (flag, decoder_name) in searcher.search(&mmap[..]) {
-        writeln!(stdout, "[{decoder_name}] {flag}").expect("Failed to write to stdout??");
+    for (flag, decoder_name, match_direction) in searcher.search(&mmap[..]) {
+        let direction = if match_direction == MatchDirection::Forward {
+            "->"
+        } else {
+            "<-"
+        };
+        writeln!(stdout, "[{decoder_name}::{direction}] {flag}")
+            .expect("Failed to write to stdout??");
     }
 
     ExitCode::SUCCESS

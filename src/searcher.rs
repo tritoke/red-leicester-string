@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use aho_corasick::AhoCorasick;
+use aho_corasick::{AhoCorasick, Match};
 
 use crate::codecs::{ALL_CODECS, Decoder, DecoderName};
 
@@ -9,7 +9,7 @@ const CLOSING_CHAR: u8 = b'}';
 
 pub struct Searcher {
     matcher: AhoCorasick,
-    decoders: Vec<(Decoder, DecoderName)>,
+    decoders: Vec<(Decoder, DecoderName, MatchDirection)>,
 }
 
 impl Searcher {
@@ -24,7 +24,7 @@ impl Searcher {
 
     fn expand_patterns<I: IntoIterator<Item = P>, P: AsRef<[u8]>>(
         patterns: I,
-    ) -> (Vec<Box<[u8]>>, Vec<(Decoder, &'static str)>) {
+    ) -> (Vec<Box<[u8]>>, Vec<(Decoder, &'static str, MatchDirection)>) {
         let mut encoded_patterns = vec![];
         let mut decoders = vec![];
 
@@ -35,11 +35,14 @@ impl Searcher {
                 let (encoded, name, decoder) = codec(pat);
 
                 // also generate the backwards version of the pattern
-                // let mut reverse_encoded = Vec::from(encoded.clone());
-                // reverse_encoded.reverse();
+                let mut reverse_encoded = Vec::from(encoded.clone());
+                reverse_encoded.reverse();
 
                 encoded_patterns.push(encoded);
-                decoders.push((decoder, name));
+                decoders.push((decoder, name, MatchDirection::Forward));
+
+                encoded_patterns.push(Box::from(reverse_encoded));
+                decoders.push((decoder, name, MatchDirection::Backward));
             }
         }
 
@@ -50,21 +53,43 @@ impl Searcher {
     pub fn search<'a>(
         &self,
         haystack: &'a [u8],
-    ) -> impl Iterator<Item = (Cow<'a, str>, DecoderName)> {
+    ) -> impl Iterator<Item = (Cow<'a, str>, DecoderName, MatchDirection)> {
         self.matcher
             .find_overlapping_iter(haystack)
             .filter_map(|match_| {
+                let (decoder, name, direction) = self.decoders[match_.pattern().as_usize()];
+                let to_decode = Self::expand_search(haystack, match_, direction);
+                let decoded = decoder(to_decode)?;
+                Some((decoded, name, direction))
+            })
+            .map(|(decoded, name, direction)| {
+                let flag = Self::postprocess_match(decoded);
+                (flag, name, direction)
+            })
+    }
+
+    fn expand_search<'a>(
+        haystack: &'a [u8],
+        match_: Match,
+        direction: MatchDirection,
+    ) -> Cow<'a, [u8]> {
+        match direction {
+            MatchDirection::Forward => {
+                // going forwards we can simply borrow from the haystack
                 let to_decode = &haystack
                     [match_.start()..usize::min(haystack.len(), match_.end() + MAX_FLAG_LENGTH)];
-                let (decoder, name) = self.decoders[match_.pattern().as_usize()];
-
-                let decoded = decoder(to_decode)?;
-                Some((decoded, name))
-            })
-            .map(|(decoded, name)| {
-                let flag = Self::postprocess_match(decoded);
-                (flag, name)
-            })
+                Cow::Borrowed(to_decode)
+            }
+            MatchDirection::Backward => {
+                // going forwards we can need to find the candidate flag area, then reverse it
+                // in order to use the decoder
+                let to_decode =
+                    &haystack[match_.start().saturating_sub(MAX_FLAG_LENGTH)..match_.end()];
+                let mut reversed = to_decode.to_owned();
+                reversed.reverse();
+                Cow::Owned(reversed)
+            }
+        }
     }
 
     fn postprocess_match<'a>(extended_match_data: Cow<'a, [u8]>) -> Cow<'a, str> {
@@ -108,18 +133,10 @@ impl Searcher {
     }
 }
 
-struct Decoders {
-    decoders: Vec<Decoder>,
-    names: Vec<&'static str>,
-}
-
-impl Decoders {
-    fn decoder(&self, pattern_id: aho_corasick::PatternID) -> (Decoder, &'static str) {
-        (
-            self.decoders[pattern_id.as_usize()],
-            self.names[pattern_id.as_usize()],
-        )
-    }
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MatchDirection {
+    Forward,
+    Backward,
 }
 
 #[cfg(test)]
