@@ -1,14 +1,15 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, sync::Arc};
 
-use aho_corasick::{AhoCorasick, Match};
+use aho_corasick::{Input, Match, automaton::Automaton, nfa};
 
 use crate::codecs::{ALL_CODECS, Decoder, DecoderName};
 
 const MAX_FLAG_LENGTH: usize = 2000;
 const CLOSING_CHAR: u8 = b'}';
 
+// TODO: decide if I want this to be Clone for multithreading... #[derive(Clone)]
 pub struct Searcher {
-    matcher: AhoCorasick,
+    matcher: Arc<dyn Automaton>,
     decoders: Vec<(Decoder, DecoderName, MatchDirection)>,
 }
 
@@ -17,7 +18,16 @@ impl Searcher {
         patterns: I,
     ) -> Result<Self, aho_corasick::BuildError> {
         let (patterns, decoders) = Self::expand_patterns(patterns);
-        let matcher = AhoCorasick::new(patterns)?;
+
+        // Build a non-contiguous NFA (NNFA) and then try to upgrade it to contiguous one
+        // if this fails just fall back to the NNFA
+        let nnfa = nfa::noncontiguous::NFA::new(patterns)?;
+
+        let builder = nfa::contiguous::Builder::new();
+        let matcher: Arc<dyn Automaton> = match builder.build_from_noncontiguous(&nnfa) {
+            Ok(cnfa) => Arc::new(cnfa),
+            Err(_) => Arc::new(nnfa),
+        };
 
         Ok(Self { matcher, decoders })
     }
@@ -54,18 +64,20 @@ impl Searcher {
         &self,
         haystack: &'a [u8],
     ) -> impl Iterator<Item = (Cow<'a, str>, DecoderName, MatchDirection)> {
-        self.matcher
-            .find_overlapping_iter(haystack)
-            .filter_map(|match_| {
-                let (decoder, name, direction) = self.decoders[match_.pattern().as_usize()];
-                let to_decode = Self::expand_search(haystack, match_, direction);
-                let decoded = decoder(to_decode)?;
-                Some((decoded, name, direction))
-            })
-            .map(|(decoded, name, direction)| {
-                let flag = Self::postprocess_match(decoded);
-                (flag, name, direction)
-            })
+        todo!()
+
+        // self.matcher
+        //     .find_overlapping_iter(haystack)
+        //     .filter_map(|match_| {
+        //         let (decoder, name, direction) = self.decoders[match_.pattern().as_usize()];
+        //         let to_decode = Self::expand_search(haystack, match_, direction);
+        //         let decoded = decoder(to_decode)?;
+        //         Some((decoded, name, direction))
+        //     })
+        //     .map(|(decoded, name, direction)| {
+        //         let flag = Self::postprocess_match(decoded);
+        //         (flag, name, direction)
+        //     })
     }
 
     fn expand_search<'a>(
