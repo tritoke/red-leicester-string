@@ -2,14 +2,14 @@ use std::borrow::Cow;
 
 use aho_corasick::AhoCorasick;
 
-use crate::codecs::{ALL_CODECS, Decoder};
+use crate::codecs::{ALL_CODECS, Decoder, DecoderName};
 
 const MAX_FLAG_LENGTH: usize = 2000;
 const CLOSING_CHAR: u8 = b'}';
 
 pub struct Searcher {
     matcher: AhoCorasick,
-    decoders: Vec<Decoder>,
+    decoders: Vec<(Decoder, DecoderName)>,
 }
 
 impl Searcher {
@@ -24,7 +24,7 @@ impl Searcher {
 
     fn expand_patterns<I: IntoIterator<Item = P>, P: AsRef<[u8]>>(
         patterns: I,
-    ) -> (Vec<Box<[u8]>>, Vec<Decoder>) {
+    ) -> (Vec<Box<[u8]>>, Vec<(Decoder, &'static str)>) {
         let mut encoded_patterns = vec![];
         let mut decoders = vec![];
 
@@ -32,9 +32,14 @@ impl Searcher {
             let pat = pattern.as_ref();
 
             for codec in ALL_CODECS {
-                let (encoded, decoder) = codec(pat);
+                let (encoded, name, decoder) = codec(pat);
+
+                // also generate the backwards version of the pattern
+                // let mut reverse_encoded = Vec::from(encoded.clone());
+                // reverse_encoded.reverse();
+
                 encoded_patterns.push(encoded);
-                decoders.push(decoder);
+                decoders.push((decoder, name));
             }
         }
 
@@ -42,15 +47,24 @@ impl Searcher {
         (encoded_patterns, decoders)
     }
 
-    pub fn search<'a>(&self, haystack: &'a [u8]) -> impl Iterator<Item = Cow<'a, str>> {
+    pub fn search<'a>(
+        &self,
+        haystack: &'a [u8],
+    ) -> impl Iterator<Item = (Cow<'a, str>, DecoderName)> {
         self.matcher
             .find_overlapping_iter(haystack)
             .filter_map(|match_| {
                 let to_decode = &haystack
                     [match_.start()..usize::min(haystack.len(), match_.end() + MAX_FLAG_LENGTH)];
-                self.decoders[match_.pattern().as_usize()](to_decode)
+                let (decoder, name) = self.decoders[match_.pattern().as_usize()];
+
+                let decoded = decoder(to_decode)?;
+                Some((decoded, name))
             })
-            .map(|decoded| Self::postprocess_match(decoded))
+            .map(|(decoded, name)| {
+                let flag = Self::postprocess_match(decoded);
+                (flag, name)
+            })
     }
 
     fn postprocess_match<'a>(extended_match_data: Cow<'a, [u8]>) -> Cow<'a, str> {
@@ -94,6 +108,20 @@ impl Searcher {
     }
 }
 
+struct Decoders {
+    decoders: Vec<Decoder>,
+    names: Vec<&'static str>,
+}
+
+impl Decoders {
+    fn decoder(&self, pattern_id: aho_corasick::PatternID) -> (Decoder, &'static str) {
+        (
+            self.decoders[pattern_id.as_usize()],
+            self.names[pattern_id.as_usize()],
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -103,15 +131,17 @@ mod tests {
     #[case("flag{", "flag{gimme_the_whole_flag}", "flag{gimme_the_whole_flag}")]
     #[case("flag{", "flag{short} with some garbage after", "flag{short}")]
     #[case("flag{", "and some trash before flag{short}", "flag{short}")]
-    fn test_identity_match<P: AsRef<[u8]>>(
-        #[case] pattern: P,
-        #[case] haystack: P,
-        #[case] correct: P,
+    #[case("flag{", b"\xFF\xFF\xFFflag{short}\xFF\xFF\xFF", "flag{short}")]
+    fn test_identity_match(
+        #[case] pattern: impl AsRef<[u8]>,
+        #[case] haystack: impl AsRef<[u8]>,
+        #[case] correct: impl AsRef<[u8]>,
     ) {
         let searcher = Searcher::new([pattern]).unwrap();
 
-        let found: Vec<Cow<'_, str>> = searcher.search(haystack.as_ref()).collect();
+        let found: Vec<(Cow<'_, str>, DecoderName)> = searcher.search(haystack.as_ref()).collect();
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].as_bytes(), correct.as_ref());
+        assert_eq!(found[0].0.as_bytes(), correct.as_ref());
+        assert_eq!(found[0].1, "UTF8");
     }
 }

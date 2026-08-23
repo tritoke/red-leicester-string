@@ -39,11 +39,12 @@ fn main() -> ExitCode {
     let file = File::open(args.file).expect("Failed to open file");
     let mmap = unsafe { Mmap::map(&file) }.expect("Failed to mmap file");
 
-    let mut stdout = std::io::stdout().lock();
     let searcher =
         Searcher::new(args.patterns).expect("Failed to build aho-corasick matcher for patterns");
-    for flag in searcher.search(&mmap[..]) {
-        writeln!(stdout, "{}", flag.as_ref()).unwrap();
+
+    let mut stdout = std::io::stdout().lock();
+    for (flag, decoder_name) in searcher.search(&mmap[..]) {
+        writeln!(stdout, "[{decoder_name}] {flag}").expect("Failed to write to stdout??");
     }
 
     ExitCode::SUCCESS
