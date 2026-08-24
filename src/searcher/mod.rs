@@ -10,7 +10,7 @@ mod codecs;
 use codecs::{ALL_CODECS, Decoder, DecoderName};
 use strided::Stride;
 
-use crate::searcher::strided_ahocorasick::StridedFindIter;
+use crate::searcher::strided_ahocorasick::StridedFindOverlapping;
 
 mod strided_ahocorasick;
 
@@ -90,8 +90,8 @@ impl Searcher {
         (encoded_patterns, decoders)
     }
 
-    fn find_iter<'a>(&self, haystack: Stride<'a, u8>) -> StridedFindIter<'a> {
-        StridedFindIter::new(self.matcher.clone(), haystack)
+    fn find_iter<'a>(&self, haystack: Stride<'a, u8>) -> StridedFindOverlapping<'a> {
+        StridedFindOverlapping::new(self.matcher.clone(), haystack)
             .expect("I fucked up creating the aho-corasick automaton, sorry...")
     }
 
@@ -225,24 +225,33 @@ mod tests {
     #[rstest]
     #[case(
         "ZmxhZ3tnaW1tZV90aGVfd2hvbGVfZmxhZ30=",
-        "flag{gimme_the_whole_flag}",
-        "base64"
+        // All three codecs are valid for this flag
+        &[
+            ("flag{gimme_the_whole_flag}", "base64"),
+            ("flag{gimme_the_whole_flag}", "base64-URL-safe"),
+            ("flag{gimme_the_whole_flag}", "base64-IMAP-modified-UTF7"),
+        ],
     )]
-    fn test_codecs(
-        #[case] haystack: impl AsRef<[u8]>,
-        #[case] correct: &str,
-        #[case] decoder: &str,
-    ) {
+    #[case("ZmxhZ3s-dWhTKiR9", 
+        // All three codecs are valid for this flag, but only one is correct :)
+        &[
+        ("flag{", "base64"),
+        ("flag{>uhS*$}", "base64-URL-safe"),
+        ("flag{", "base64-IMAP-modified-UTF7"),
+    ])]
+    fn test_codecs(#[case] haystack: impl AsRef<[u8]>, #[case] correct: &[(&str, &str)]) {
         let searcher = Searcher::new(["flag{"]).unwrap();
         let haystack = Stride::new(haystack.as_ref());
         let found: Vec<_> = searcher.search(haystack).collect();
-        dbg!(&found);
-        assert_eq!(found.len(), 1);
+        assert_eq!(found.len(), correct.len(), "Found: {found:?}");
 
-        let (flag, decoder_name, match_direction) = found.into_iter().next().unwrap();
-        assert_eq!(&flag, correct);
-        assert_eq!(decoder_name, decoder);
-        assert_eq!(match_direction, MatchDirection::Forward);
+        for ((flag, decoder_name, match_direction), (correct, decoder)) in
+            found.into_iter().zip(correct)
+        {
+            assert_eq!(&flag, correct);
+            assert_eq!(&decoder_name, decoder);
+            assert_eq!(match_direction, MatchDirection::Forward);
+        }
     }
 
     // This test is kinda slow in debug mode so only run in release mode tests
