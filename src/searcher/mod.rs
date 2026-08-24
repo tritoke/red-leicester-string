@@ -1,4 +1,8 @@
-use std::sync::Arc;
+use std::{
+    fmt::Debug,
+    panic::{RefUnwindSafe, UnwindSafe},
+    sync::Arc,
+};
 
 use aho_corasick::{Match, automaton::Automaton, nfa};
 
@@ -13,9 +17,18 @@ mod strided_ahocorasick;
 const MAX_FLAG_LENGTH: usize = 2000;
 const CLOSING_CHAR: u8 = b'}';
 
+// Also nicked from burntsushi (if you ever read this thanks for writing an awesome library
+// this has been a joy to work on!)
+trait AcAutomaton: Automaton + Debug + Send + Sync + UnwindSafe + RefUnwindSafe + 'static {}
+
+impl<A> AcAutomaton for A where
+    A: Automaton + Debug + Send + Sync + UnwindSafe + RefUnwindSafe + 'static
+{
+}
+
 // TODO: decide if I want this to be Clone for multithreading... #[derive(Clone)]
 pub struct Searcher {
-    matcher: Arc<dyn Automaton>,
+    matcher: Arc<dyn AcAutomaton>,
     decoders: Vec<(Decoder, DecoderName, MatchDirection)>,
 }
 
@@ -33,7 +46,7 @@ impl Searcher {
             .build(patterns)?;
 
         let builder = nfa::contiguous::Builder::new();
-        let matcher: Arc<dyn Automaton> = match builder.build_from_noncontiguous(&nnfa) {
+        let matcher: Arc<dyn AcAutomaton> = match builder.build_from_noncontiguous(&nnfa) {
             Ok(cnfa) => Arc::new(cnfa),
             Err(_) => Arc::new(nnfa),
         };
