@@ -26,17 +26,21 @@ impl<A> AcAutomaton for A where
 {
 }
 
-// TODO: decide if I want this to be Clone for multithreading... #[derive(Clone)]
 pub struct Searcher {
     matcher: Arc<dyn AcAutomaton>,
     decoders: Vec<(Decoder, DecoderName, MatchDirection)>,
+    unexpanded: Box<[String]>,
 }
 
 impl Searcher {
-    pub fn new<I: IntoIterator<Item = P>, P: AsRef<[u8]>>(
-        patterns: I,
+    pub fn new(
+        patterns: impl IntoIterator<Item = impl AsRef<str>>,
     ) -> Result<Self, aho_corasick::BuildError> {
-        let (patterns, decoders) = Self::expand_patterns(patterns);
+        let unexpanded: Vec<_> = patterns
+            .into_iter()
+            .map(|pat| pat.as_ref().to_owned())
+            .collect();
+        let (patterns, decoders) = Self::expand_patterns(unexpanded.clone());
 
         // Build a non-contiguous NFA (NNFA) and then try to upgrade it to contiguous one
         // if this fails just fall back to the NNFA
@@ -51,7 +55,11 @@ impl Searcher {
             Err(_) => Arc::new(nnfa),
         };
 
-        Ok(Self { matcher, decoders })
+        Ok(Self {
+            matcher,
+            decoders,
+            unexpanded: unexpanded.into(),
+        })
     }
 
     fn expand_patterns<I: IntoIterator<Item = P>, P: AsRef<[u8]>>(
@@ -106,6 +114,13 @@ impl Searcher {
             .map(|(decoded, name, direction)| {
                 let flag = Self::postprocess_match(decoded);
                 (flag, name, direction)
+            })
+            .filter(|(flag, _, _)| {
+                // some codecs can produce erroneous matches which don't actually start with a flag
+                // prefix, filter those out here
+                self.unexpanded
+                    .iter()
+                    .any(|flag_prefix| flag.starts_with(flag_prefix))
             })
     }
 
@@ -171,28 +186,27 @@ mod tests {
     use rstest::rstest;
 
     #[rstest]
-    #[case("flag{", "flag{gimme_the_whole_flag}", 1, &["flag{gimme_the_whole_flag}"], MatchDirection::Forward)]
-    #[case("flag{", "flag{short} with some garbage after", 1, &["flag{short}"], MatchDirection::Forward)]
-    #[case("flag{", "and some trash before flag{short}", 1, &["flag{short}"], MatchDirection::Forward)]
-    #[case("flag{", b"\xFF\xFF\xFFflag{short}\xFF\xFF\xFF", 1, &["flag{short}"], MatchDirection::Forward)]
-    #[case("flag{", "}galf_elohw_eht_emmig{galf", 1, &["flag{gimme_the_whole_flag}"], MatchDirection::Backward)]
-    #[case("flag{", "}trohs{galf with some garbage after", 1, &["flag{short}"], MatchDirection::Backward)]
-    #[case("flag{", "and some trash before }trohs{galf", 1, &["flag{short}"], MatchDirection::Backward)]
-    #[case("flag{", b"\xFF\xFF\xFF}trohs{galf\xFF\xFF\xFF", 1, &["flag{short}"], MatchDirection::Backward)]
-    #[case("flag{", "ffllaagg{{ffllaagg12}}", 2, &["flag{flag1}", "flag{flag2}"], MatchDirection::Forward)]
-    #[case("flag{", "ffffllaagg{{ffllaagg12}}", 2, &["flag{flag1}", "flag{flag2}"], MatchDirection::Forward)]
-    #[case("flag{", "ffflllaaaggg{{{ffflllaaaggg123}}}", 3, &["flag{flag1}", "flag{flag2}", "flag{flag3}"], MatchDirection::Forward)]
-    #[case("flag{", "}}}321gggaaalllfff{{{gggaaalllfff", 3, &["flag{flag3}", "flag{flag2}", "flag{flag1}"], MatchDirection::Backward)]
-    #[case("flag{", "fAAAlAAAaAAAgAAA{AAAfAAAlAAAaAAAgAAA1AAA}AAA", 4, &["flag{flag1}"], MatchDirection::Forward)]
-    #[case("flag{", "AAAAfAAAlAAAaAAAgAAA{AAAfAAAlAAAaAAAgAAA1AAA}AAA", 4, &["flag{flag1}"], MatchDirection::Forward)]
+    #[case("flag{gimme_the_whole_flag}", 1, &["flag{gimme_the_whole_flag}"], MatchDirection::Forward)]
+    #[case("flag{short} with some garbage after", 1, &["flag{short}"], MatchDirection::Forward)]
+    #[case("and some trash before flag{short}", 1, &["flag{short}"], MatchDirection::Forward)]
+    #[case(b"\xFF\xFF\xFFflag{short}\xFF\xFF\xFF", 1, &["flag{short}"], MatchDirection::Forward)]
+    #[case("}galf_elohw_eht_emmig{galf", 1, &["flag{gimme_the_whole_flag}"], MatchDirection::Backward)]
+    #[case("}trohs{galf with some garbage after", 1, &["flag{short}"], MatchDirection::Backward)]
+    #[case("and some trash before }trohs{galf", 1, &["flag{short}"], MatchDirection::Backward)]
+    #[case(b"\xFF\xFF\xFF}trohs{galf\xFF\xFF\xFF", 1, &["flag{short}"], MatchDirection::Backward)]
+    #[case("ffllaagg{{ffllaagg12}}", 2, &["flag{flag1}", "flag{flag2}"], MatchDirection::Forward)]
+    #[case("ffffllaagg{{ffllaagg12}}", 2, &["flag{flag1}", "flag{flag2}"], MatchDirection::Forward)]
+    #[case("ffflllaaaggg{{{ffflllaaaggg123}}}", 3, &["flag{flag1}", "flag{flag2}", "flag{flag3}"], MatchDirection::Forward)]
+    #[case("}}}321gggaaalllfff{{{gggaaalllfff", 3, &["flag{flag3}", "flag{flag2}", "flag{flag1}"], MatchDirection::Backward)]
+    #[case("fAAAlAAAaAAAgAAA{AAAfAAAlAAAaAAAgAAA1AAA}AAA", 4, &["flag{flag1}"], MatchDirection::Forward)]
+    #[case("AAAAfAAAlAAAaAAAgAAA{AAAfAAAlAAAaAAAgAAA1AAA}AAA", 4, &["flag{flag1}"], MatchDirection::Forward)]
     fn test_identity_match(
-        #[case] pattern: &str,
         #[case] haystack: impl AsRef<[u8]>,
         #[case] stride_length: usize,
         #[case] correct: &[&str],
         #[case] correct_direction: MatchDirection,
     ) {
-        let searcher = Searcher::new([pattern]).unwrap();
+        let searcher = Searcher::new(["flag{"]).unwrap();
 
         let haystack = Stride::new(haystack.as_ref());
         let found: Vec<(String, DecoderName, MatchDirection)> = haystack
@@ -203,9 +217,32 @@ mod tests {
 
         for ((flag, decoder_name, match_direction), correct) in found.into_iter().zip(correct) {
             assert_eq!(&flag, correct);
-            assert_eq!(decoder_name, "UTF8");
+            assert_eq!(decoder_name, "utf8");
             assert_eq!(match_direction, correct_direction);
         }
+    }
+
+    #[rstest]
+    #[case(
+        "ZmxhZ3tnaW1tZV90aGVfd2hvbGVfZmxhZ30=",
+        "flag{gimme_the_whole_flag}",
+        "base64"
+    )]
+    fn test_codecs(
+        #[case] haystack: impl AsRef<[u8]>,
+        #[case] correct: &str,
+        #[case] decoder: &str,
+    ) {
+        let searcher = Searcher::new(["flag{"]).unwrap();
+        let haystack = Stride::new(haystack.as_ref());
+        let found: Vec<_> = searcher.search(haystack).collect();
+        dbg!(&found);
+        assert_eq!(found.len(), 1);
+
+        let (flag, decoder_name, match_direction) = found.into_iter().next().unwrap();
+        assert_eq!(&flag, correct);
+        assert_eq!(decoder_name, decoder);
+        assert_eq!(match_direction, MatchDirection::Forward);
     }
 
     // This test is kinda slow in debug mode so only run in release mode tests

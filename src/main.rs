@@ -38,6 +38,7 @@ struct Args {
     /// similar to stringcheese
     #[clap(long, default_value_t = false)]
     context: bool,
+    // TODO: Add JSON-LINES output mode
 }
 
 fn main() -> ExitCode {

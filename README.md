@@ -8,3 +8,5 @@ Strides of the file are also supported:
   - 5: }qSgvdSyhbeOYqNpNGwsiuFOmrVrSAtJdqpsLrWO{qJJQgSRnLaLVuolnRRrfFfja
 
 By default strides up to 32 are searched.
+
+And ofc base64: ZmxhZ3t3ZSBkbyBhIGxpdHRsZSBlbmNvZGluZ30=
