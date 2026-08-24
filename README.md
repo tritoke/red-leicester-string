@@ -10,3 +10,6 @@ Strides of the file are also supported:
 By default strides up to 32 are searched.
 
 And ofc base64: ZmxhZ3t3ZSBkbyBhIGxpdHRsZSBlbmNvZGluZ30=
+
+Additionally there is `--strict` which will prevent partial flags from being output,
+i.e. flag{ should not be output on its own

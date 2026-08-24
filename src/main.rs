@@ -38,6 +38,11 @@ struct Args {
     /// similar to stringcheese
     #[clap(long, default_value_t = false)]
     context: bool,
+
+    /// don't print the flag if it doesn't end in } this prevents the output of potentially many
+    /// partial flags in some cases
+    #[clap(long, default_value_t = false)]
+    strict: bool,
     // TODO: Add JSON-LINES output mode
 }
 
@@ -89,6 +94,10 @@ fn main() -> ExitCode {
     });
 
     flags.for_each(|(flag, context)| {
+        if args.strict && !flag.ends_with('}') {
+            return;
+        }
+
         if args.context {
             println!("{context}:");
         }
