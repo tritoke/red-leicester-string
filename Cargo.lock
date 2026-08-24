@@ -338,6 +338,7 @@ dependencies = [
  "memmap",
  "rand",
  "rstest",
+ "strided",
 ]
 
 [[package]]
@@ -444,6 +445,12 @@ name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
+
+[[package]]
+name = "strided"
+version = "0.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3e96a77610a727267dec6f2afa4d8a0b22092bdc410515dd638124fa1b9bcc6"
 
 [[package]]
 name = "strsim"

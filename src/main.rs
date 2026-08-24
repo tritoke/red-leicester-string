@@ -1,6 +1,13 @@
 use clap::Parser;
 use memmap::Mmap;
-use std::{fs::File, io::Write, path::PathBuf, process::ExitCode};
+use std::{
+    fs::File,
+    io::Write,
+    path::PathBuf,
+    process::ExitCode,
+    sync::mpsc::{Receiver, Sender},
+};
+use strided::Stride;
 
 mod searcher;
 use searcher::Searcher;
@@ -28,6 +35,7 @@ struct Args {
     patterns: Vec<String>,
 
     /// the number of threads to use while searching
+    #[clap(short, long)]
     threads: Option<u32>,
 }
 
@@ -46,7 +54,7 @@ fn main() -> ExitCode {
         Searcher::new(args.patterns).expect("Failed to build aho-corasick matcher for patterns");
 
     let mut stdout = std::io::stdout().lock();
-    for (flag, decoder_name, match_direction) in searcher.search(&mmap[..], 1) {
+    for (flag, decoder_name, match_direction) in searcher.search(Stride::new(&mmap[..])) {
         let direction = if match_direction == MatchDirection::Forward {
             "->"
         } else {

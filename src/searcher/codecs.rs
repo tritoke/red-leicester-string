@@ -1,13 +1,11 @@
-use std::borrow::Cow;
-
 // A set of types for tying together the encoding of data and their decoders
-pub type Decoder = for<'a> fn(Cow<'a, [u8]>) -> Option<Cow<'a, [u8]>>;
 pub type Encoded = Box<[u8]>;
-pub type Decoded<'a> = Option<Cow<'a, [u8]>>;
+pub type Decoded = Option<Box<[u8]>>;
+pub type Decoder = fn(Encoded) -> Decoded;
 pub type DecoderName = &'static str;
 pub type Codec = fn(&[u8]) -> (Encoded, DecoderName, Decoder);
 
-fn identity_decoder<'a>(buf: Cow<'a, [u8]>) -> Decoded<'a> {
+fn identity_decoder(buf: Encoded) -> Decoded {
     Some(buf)
 }
 

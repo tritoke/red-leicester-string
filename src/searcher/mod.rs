@@ -1,9 +1,10 @@
-use std::{borrow::Cow, sync::Arc};
+use std::sync::Arc;
 
 use aho_corasick::{Match, automaton::Automaton, nfa};
 
 mod codecs;
 use codecs::{ALL_CODECS, Decoder, DecoderName};
+use strided::Stride;
 
 use crate::searcher::strided_ahocorasick::StridedFindIter;
 
@@ -68,26 +69,24 @@ impl Searcher {
         (encoded_patterns, decoders)
     }
 
-    fn find_with_stride<'a>(&self, haystack: &'a [u8], stride: usize) -> StridedFindIter<'a> {
-        StridedFindIter::new(self.matcher.clone(), haystack.into(), stride)
+    fn find_iter<'a>(&self, haystack: Stride<'a, u8>) -> StridedFindIter<'a> {
+        StridedFindIter::new(self.matcher.clone(), haystack)
             .expect("I fucked up creating the aho-corasick automaton, sorry...")
     }
 
     pub fn search<'a>(
         &self,
-        haystack: &'a [u8],
-        stride: usize,
-    ) -> impl Iterator<Item = (Cow<'a, str>, DecoderName, MatchDirection)> {
-        self.find_with_stride(haystack, stride)
+        haystack: Stride<'a, u8>,
+    ) -> impl Iterator<Item = (String, DecoderName, MatchDirection)> {
+        self.find_iter(haystack)
             .filter_map(move |match_| {
-                dbg!(match_);
                 // Look up the decoder for this match and whether it was a match going forwards or backwards
                 let (decoder, name, direction) = self.decoders[match_.pattern().as_usize()];
 
                 // Extend the match in the correct direcion, i.e.
                 // if we matched "flag{" going forwards then walk forwards to grab more of the input
                 // to find the rest of the flag
-                let to_decode = Self::expand_search(haystack, match_, direction, stride);
+                let to_decode = Self::expand_search(haystack, match_, direction);
                 let decoded = decoder(to_decode)?;
                 Some((decoded, name, direction))
             })
@@ -98,49 +97,30 @@ impl Searcher {
     }
 
     fn expand_search<'a>(
-        haystack: &'a [u8],
+        haystack: Stride<'a, u8>,
         match_: Match,
         direction: MatchDirection,
-        stride: usize,
-    ) -> Cow<'a, [u8]> {
+    ) -> Box<[u8]> {
         match direction {
-            MatchDirection::Forward if stride == 1 => {
-                // going forwards with stride=1 we can simply borrow from the haystack
-                let raw_match_data = &haystack
-                    [match_.start()..usize::min(haystack.len(), match_.end() + MAX_FLAG_LENGTH)];
-                Cow::Borrowed(raw_match_data)
-            }
             MatchDirection::Forward => {
-                let raw_match_data = &haystack[match_.start()
-                    ..usize::min(haystack.len(), match_.end() + MAX_FLAG_LENGTH * stride)];
-                eprintln!("{match_:?}");
-                eprintln!(
-                    "{:?}",
-                    match_.start()
-                        ..usize::min(haystack.len(), match_.end() + MAX_FLAG_LENGTH * stride)
-                );
-                let to_decode = raw_match_data.iter().copied().step_by(stride).collect();
-                Cow::Owned(to_decode)
+                let start = match_.start();
+                let end = usize::min(haystack.len(), match_.end() + MAX_FLAG_LENGTH);
+                let slice = haystack.slice(start, end);
+                let raw_match_data: Vec<u8> = slice.iter().copied().collect();
+                raw_match_data.into()
             }
             MatchDirection::Backward => {
-                // going forwards we can need to find the candidate flag area, then reverse it
-                // in order to use the decoder
-                let raw_match_data = &haystack
-                    [match_.start().saturating_sub(MAX_FLAG_LENGTH * stride)..match_.end()];
-                let mut reversed = if stride == 1 {
-                    raw_match_data.to_owned()
-                } else {
-                    raw_match_data.iter().copied().step_by(stride).collect()
-                };
-                reversed.reverse();
-                Cow::Owned(reversed)
+                let start = match_.start().saturating_sub(MAX_FLAG_LENGTH);
+                let end = match_.end();
+                let slice = haystack.slice(start, end);
+                let raw_match_data: Vec<u8> = slice.iter().rev().copied().collect();
+                raw_match_data.into()
             }
         }
     }
 
-    fn postprocess_match<'a>(extended_match_data: Cow<'a, [u8]>) -> Cow<'a, str> {
-        // compute where is valid UTF8 / where the closing brace is via as_ref so we can the work is
-        // shared for each branch of the Cow's state
+    fn postprocess_match(extended_match_data: Box<[u8]>) -> String {
+        // compute where is valid UTF8 / where the closing brace is
         let haystack = extended_match_data.as_ref();
         let utf8_valid_end = encoding_rs::Encoding::utf8_valid_up_to(haystack);
         let closing_pos = memchr::memchr(CLOSING_CHAR, &haystack).unwrap_or(utf8_valid_end);
@@ -150,32 +130,18 @@ impl Searcher {
         // in the same place
         let truncate_to = usize::min(utf8_valid_end, closing_pos + 1);
 
-        match extended_match_data {
-            Cow::Borrowed(borrow) => {
-                // SAFETY: borrow must contain only valid UTF8 data as either:
-                // 1. we truncated to utf8_valid_end and thus all the data before this is utf8
-                // 2. we hit closing_pos, which is strictly shorter than utf8_valid_end and is a
-                //    unicode codepoint boundary and is thus safe to truncate to.
-                let flag: &'a str =
-                    unsafe { std::str::from_utf8_unchecked(&borrow[..truncate_to]) };
+        let mut owned = Vec::from(extended_match_data);
+        // discard the invalid UTF8 data or until we see a closing brace
+        owned.resize(truncate_to, 0);
 
-                Cow::Borrowed(&flag)
-            }
-            Cow::Owned(mut owned) => {
-                // discard the invalid UTF8 data or until we see a closing brace
-                owned.resize(truncate_to, 0);
+        // not needed but we might as well I think
+        owned.shrink_to_fit();
 
-                // not needed but we might as well I think
-                owned.shrink_to_fit();
-
-                // SAFETY: owned must contain only valid UTF8 data as either:
-                // 1. we truncated to utf8_valid_end and thus all the data before this is utf8
-                // 2. we hit closing_pos, which is strictly shorter than utf8_valid_end and is a
-                //    unicode codepoint boundary and is thus safe to truncate to.
-                let flag = unsafe { String::from_utf8_unchecked(owned) };
-                Cow::Owned(flag)
-            }
-        }
+        // SAFETY: owned must contain only valid UTF8 data as either:
+        // 1. we truncated to utf8_valid_end and thus all the data before this is utf8
+        // 2. we hit closing_pos, which is strictly shorter than utf8_valid_end and is a
+        //    unicode codepoint boundary and is thus safe to truncate to.
+        unsafe { String::from_utf8_unchecked(owned) }
     }
 }
 
@@ -192,145 +158,41 @@ mod tests {
     use rstest::rstest;
 
     #[rstest]
-    #[case("flag{", "flag{gimme_the_whole_flag}", "flag{gimme_the_whole_flag}")]
-    #[case("flag{", "flag{short} with some garbage after", "flag{short}")]
-    #[case("flag{", "and some trash before flag{short}", "flag{short}")]
-    #[case("flag{", b"\xFF\xFF\xFFflag{short}\xFF\xFF\xFF", "flag{short}")]
-    fn test_identity_match_forward(
-        #[case] pattern: impl AsRef<[u8]>,
+    #[case("flag{", "flag{gimme_the_whole_flag}", 1, &["flag{gimme_the_whole_flag}"], MatchDirection::Forward)]
+    #[case("flag{", "flag{short} with some garbage after", 1, &["flag{short}"], MatchDirection::Forward)]
+    #[case("flag{", "and some trash before flag{short}", 1, &["flag{short}"], MatchDirection::Forward)]
+    #[case("flag{", b"\xFF\xFF\xFFflag{short}\xFF\xFF\xFF", 1, &["flag{short}"], MatchDirection::Forward)]
+    #[case("flag{", "}galf_elohw_eht_emmig{galf", 1, &["flag{gimme_the_whole_flag}"], MatchDirection::Backward)]
+    #[case("flag{", "}trohs{galf with some garbage after", 1, &["flag{short}"], MatchDirection::Backward)]
+    #[case("flag{", "and some trash before }trohs{galf", 1, &["flag{short}"], MatchDirection::Backward)]
+    #[case("flag{", b"\xFF\xFF\xFF}trohs{galf\xFF\xFF\xFF", 1, &["flag{short}"], MatchDirection::Backward)]
+    #[case("flag{", "ffllaagg{{ffllaagg12}}", 2, &["flag{flag1}", "flag{flag2}"], MatchDirection::Forward)]
+    #[case("flag{", "ffffllaagg{{ffllaagg12}}", 2, &["flag{flag1}", "flag{flag2}"], MatchDirection::Forward)]
+    #[case("flag{", "ffflllaaaggg{{{ffflllaaaggg123}}}", 3, &["flag{flag1}", "flag{flag2}", "flag{flag3}"], MatchDirection::Forward)]
+    #[case("flag{", "}}}321gggaaalllfff{{{gggaaalllfff", 3, &["flag{flag3}", "flag{flag2}", "flag{flag1}"], MatchDirection::Backward)]
+    #[case("flag{", "fAAAlAAAaAAAgAAA{AAAfAAAlAAAaAAAgAAA1AAA}AAA", 4, &["flag{flag1}"], MatchDirection::Forward)]
+    #[case("flag{", "AAAAfAAAlAAAaAAAgAAA{AAAfAAAlAAAaAAAgAAA1AAA}AAA", 4, &["flag{flag1}"], MatchDirection::Forward)]
+    fn test_identity_match(
+        #[case] pattern: &str,
         #[case] haystack: impl AsRef<[u8]>,
-        #[case] correct: &str,
+        #[case] stride_length: usize,
+        #[case] correct: &[&str],
+        #[case] correct_direction: MatchDirection,
     ) {
         let searcher = Searcher::new([pattern]).unwrap();
 
-        let found: Vec<(Cow<'_, str>, DecoderName, MatchDirection)> =
-            searcher.search(haystack.as_ref(), 1).collect();
-        assert_eq!(found.len(), 1);
+        let haystack = Stride::new(haystack.as_ref());
+        let found: Vec<(String, DecoderName, MatchDirection)> = haystack
+            .substrides(stride_length)
+            .flat_map(|pile| searcher.search(pile))
+            .collect();
+        assert_eq!(found.len(), correct.len());
 
-        let (flag, decoder_name, match_direction) = found.into_iter().next().unwrap();
-        assert_eq!(flag, correct);
-        assert_eq!(decoder_name, "UTF8");
-        assert_eq!(match_direction, MatchDirection::Forward);
-    }
-
-    #[rstest]
-    #[case("flag{", "}galf_elohw_eht_emmig{galf", "flag{gimme_the_whole_flag}")]
-    #[case("flag{", "}trohs{galf with some garbage after", "flag{short}")]
-    #[case("flag{", "and some trash before }trohs{galf", "flag{short}")]
-    #[case("flag{", b"\xFF\xFF\xFF}trohs{galf\xFF\xFF\xFF", "flag{short}")]
-    fn test_identity_match_backwards(
-        #[case] pattern: impl AsRef<[u8]>,
-        #[case] haystack: impl AsRef<[u8]>,
-        #[case] correct: &str,
-    ) {
-        let searcher = Searcher::new([pattern]).unwrap();
-
-        let found: Vec<(Cow<'_, str>, DecoderName, MatchDirection)> =
-            searcher.search(haystack.as_ref(), 1).collect();
-        assert_eq!(found.len(), 1);
-
-        let (flag, decoder_name, match_direction) = found.into_iter().next().unwrap();
-        assert_eq!(flag, correct);
-        assert_eq!(decoder_name, "UTF8");
-        assert_eq!(match_direction, MatchDirection::Backward);
-    }
-
-    #[rstest]
-    #[case("flag{", "ffllaagg{{ffllaagg12}}", 0, "flag{flag1}")]
-    #[case("flag{", "ffllaagg{{ffllaagg12}}", 1, "flag{flag2}")]
-    #[case("flag{", "ffffllaagg{{ffllaagg12}}", 0, "flag{flag1}")]
-    #[case("flag{", "ffffllaagg{{ffllaagg12}}", 1, "flag{flag2}")]
-    fn test_identity_match_stride_2(
-        #[case] pattern: impl AsRef<[u8]>,
-        #[case] haystack: impl AsRef<[u8]>,
-        #[case] start: usize,
-        #[case] correct: &str,
-    ) {
-        let searcher = Searcher::new([pattern]).unwrap();
-
-        let found: Vec<(Cow<'_, str>, DecoderName, MatchDirection)> =
-            searcher.search(&haystack.as_ref()[start..], 2).collect();
-        assert_eq!(found.len(), 1);
-
-        let (flag, decoder_name, match_direction) = found.into_iter().next().unwrap();
-        assert_eq!(flag, correct);
-        assert_eq!(decoder_name, "UTF8");
-        assert_eq!(match_direction, MatchDirection::Forward);
-    }
-
-    #[rstest]
-    #[case("flag{", "ffflllaaaggg{{{ffflllaaaggg123}}}", 0, "flag{flag1}")]
-    #[case("flag{", "ffflllaaaggg{{{ffflllaaaggg123}}}", 1, "flag{flag2}")]
-    #[case("flag{", "ffflllaaaggg{{{ffflllaaaggg123}}}", 2, "flag{flag3}")]
-    fn test_identity_match_stride_3(
-        #[case] pattern: impl AsRef<[u8]>,
-        #[case] haystack: impl AsRef<[u8]>,
-        #[case] start: usize,
-        #[case] correct: &str,
-    ) {
-        let searcher = Searcher::new([pattern]).unwrap();
-
-        let found: Vec<(Cow<'_, str>, DecoderName, MatchDirection)> =
-            searcher.search(&haystack.as_ref()[start..], 3).collect();
-        assert_eq!(found.len(), 1);
-
-        let (flag, decoder_name, match_direction) = found.into_iter().next().unwrap();
-        assert_eq!(flag, correct);
-        assert_eq!(decoder_name, "UTF8");
-        assert_eq!(match_direction, MatchDirection::Forward);
-    }
-
-    #[rstest]
-    #[case("flag{", "}}}321gggaaalllfff{{{gggaaalllfff", 0, "flag{flag3}")]
-    #[case("flag{", "}}}321gggaaalllfff{{{gggaaalllfff", 1, "flag{flag2}")]
-    #[case("flag{", "}}}321gggaaalllfff{{{gggaaalllfff", 2, "flag{flag1}")]
-    fn test_identity_match_stride_3_backwards(
-        #[case] pattern: impl AsRef<[u8]>,
-        #[case] haystack: impl AsRef<[u8]>,
-        #[case] start: usize,
-        #[case] correct: &str,
-    ) {
-        let searcher = Searcher::new([pattern]).unwrap();
-
-        let found: Vec<(Cow<'_, str>, DecoderName, MatchDirection)> =
-            searcher.search(&haystack.as_ref()[start..], 3).collect();
-        assert_eq!(found.len(), 1);
-
-        let (flag, decoder_name, match_direction) = found.into_iter().next().unwrap();
-        assert_eq!(flag, correct);
-        assert_eq!(decoder_name, "UTF8");
-        assert_eq!(match_direction, MatchDirection::Backward);
-    }
-
-    #[rstest]
-    #[case(
-        "flag{",
-        "fAAAlAAAaAAAgAAA{AAAfAAAlAAAaAAAgAAA1AAA}AAA",
-        4,
-        "flag{flag1}"
-    )]
-    #[case(
-        "flag{",
-        "AAAAfAAAlAAAaAAAgAAA{AAAfAAAlAAAaAAAgAAA1AAA}AAA",
-        4,
-        "flag{flag1}"
-    )]
-    fn test_identity_match_stride_large(
-        #[case] pattern: impl AsRef<[u8]>,
-        #[case] haystack: impl AsRef<[u8]>,
-        #[case] stride: usize,
-        #[case] correct: &str,
-    ) {
-        let searcher = Searcher::new([pattern]).unwrap();
-
-        let found: Vec<(Cow<'_, str>, DecoderName, MatchDirection)> =
-            searcher.search(&haystack.as_ref(), stride).collect();
-        assert_eq!(found.len(), 1);
-
-        let (flag, decoder_name, match_direction) = found.into_iter().next().unwrap();
-        assert_eq!(flag, correct);
-        assert_eq!(decoder_name, "UTF8");
-        assert_eq!(match_direction, MatchDirection::Forward);
+        for ((flag, decoder_name, match_direction), correct) in found.into_iter().zip(correct) {
+            assert_eq!(&flag, correct);
+            assert_eq!(decoder_name, "UTF8");
+            assert_eq!(match_direction, correct_direction);
+        }
     }
 
     // This test is kinda slow in debug mode so only run in release mode tests
@@ -341,6 +203,8 @@ mod tests {
         let mut rng = rand::rng();
         buf.resize(buf.capacity(), 0);
 
+        let searcher = Searcher::new(["flag{"]).unwrap();
+
         let correct = "flag{big_stripe}";
         for stride in 2..(buf.len() / 2) / correct.len() {
             rng.fill_bytes(&mut buf[..]);
@@ -350,9 +214,14 @@ mod tests {
                 buf[start + i * stride] = *c;
             }
 
-            let searcher = Searcher::new(["flag{"]).unwrap();
+            let haystack = Stride::new(&buf);
+            let found: Vec<_> = haystack
+                .substrides(stride)
+                .skip(start % stride)
+                .take(1)
+                .flat_map(|pile| searcher.search(pile))
+                .collect();
 
-            let found: Vec<_> = searcher.search(&buf[start % stride..], stride).collect();
             assert_eq!(found.len(), 1);
 
             let (flag, decoder_name, match_direction) = found.into_iter().next().unwrap();

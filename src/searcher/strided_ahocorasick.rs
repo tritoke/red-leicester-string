@@ -1,36 +1,74 @@
 use std::sync::Arc;
 
 use aho_corasick::{
-    Anchored, Input, Match, MatchError,
+    Anchored, Match, MatchError, Span,
     automaton::{Automaton, StateID},
 };
+use strided::Stride;
+
+// A custom Input-style struct for our use case to trivially support different strides
+pub struct Input<'h> {
+    haystack: Stride<'h, u8>,
+    span: Span,
+}
+
+impl<'h> Input<'h> {
+    fn new(haystack: Stride<'h, u8>) -> Self {
+        Self {
+            haystack,
+            span: Span {
+                start: 0,
+                end: haystack.len(),
+            },
+        }
+    }
+
+    fn haystack(&self) -> Stride<'h, u8> {
+        self.haystack
+    }
+
+    fn set_start(&mut self, start: usize) {
+        self.span.start = start;
+    }
+
+    fn start(&self) -> usize {
+        self.span.start
+    }
+
+    fn end(&self) -> usize {
+        self.span.end
+    }
+
+    fn is_done(&self) -> bool {
+        self.span.start > self.span.end
+    }
+}
+
+impl<'h> From<Stride<'h, u8>> for Input<'h> {
+    fn from(haystack: Stride<'h, u8>) -> Self {
+        Self::new(haystack)
+    }
+}
 
 // Copied as much as possible from the FindIter implemention in the aho-corasick crate
 pub struct StridedFindIter<'h> {
     aut: Arc<dyn Automaton>,
     input: Input<'h>,
     last_match_end: Option<usize>,
-    stride: usize,
 }
 
 impl<'h> StridedFindIter<'h> {
-    pub fn new(
-        aut: Arc<dyn Automaton>,
-        input: Input<'h>,
-        stride: usize,
-    ) -> Result<Self, MatchError> {
-        let _ = aut.start_state(input.get_anchored())?;
+    pub fn new(aut: Arc<dyn Automaton>, input: impl Into<Input<'h>>) -> Result<Self, MatchError> {
+        let _ = aut.start_state(Anchored::No)?;
         Ok(Self {
             aut,
-            input,
+            input: input.into(),
             last_match_end: None,
-            stride,
         })
     }
 
     fn search(&self) -> Option<Match> {
-        try_find_fwd(&self.aut, &self.input, self.stride)
-            .expect("Already checked that no error can occur here")
+        try_find_fwd(&self.aut, &self.input).expect("Already checked that no error can occur here")
     }
 
     #[cold]
@@ -62,41 +100,30 @@ impl<'h> Iterator for StridedFindIter<'h> {
 }
 
 #[inline(always)]
-fn get_match(
-    aut: &Arc<dyn Automaton>,
-    sid: StateID,
-    index: usize,
-    at: usize,
-    stride: usize,
-) -> Match {
+fn get_match(aut: &Arc<dyn Automaton>, sid: StateID, index: usize, at: usize) -> Match {
     let pid = aut.match_pattern(sid, index);
     let len = aut.pattern_len(pid);
-    Match::new(pid, at - (len - 1) * stride..at + 1)
+    Match::new(pid, (at - len)..at)
 }
 
-fn try_find_fwd(
-    aut: &Arc<dyn Automaton>,
-    input: &Input<'_>,
-    stride: usize,
-) -> Result<Option<Match>, MatchError> {
+fn try_find_fwd(aut: &Arc<dyn Automaton>, input: &Input<'_>) -> Result<Option<Match>, MatchError> {
     if input.is_done() {
         return Ok(None);
     }
 
-    try_find_fwd_imp(aut, input, stride)
+    try_find_fwd_imp(aut, input)
 }
 
 #[inline(always)]
 fn try_find_fwd_imp(
     aut: &Arc<dyn Automaton>,
     input: &Input<'_>,
-    stride: usize,
 ) -> Result<Option<Match>, MatchError> {
-    let mut sid = aut.start_state(input.get_anchored())?;
+    let mut sid = aut.start_state(Anchored::No)?;
     let mut at = input.start();
     let mut mat = None;
     if aut.is_match(sid) {
-        mat = Some(get_match(aut, sid, 0, at, stride));
+        mat = Some(get_match(aut, sid, 0, at));
         return Ok(mat);
     }
 
@@ -106,14 +133,14 @@ fn try_find_fwd_imp(
             if aut.is_dead(sid) {
                 return Ok(mat);
             } else if aut.is_match(sid) {
-                let m = get_match(aut, sid, 0, at, stride);
+                let m = get_match(aut, sid, 0, at + 1);
                 mat = Some(m);
                 return Ok(mat);
             } else {
                 debug_assert!(false, "unreachable");
             }
         }
-        at += stride;
+        at += 1;
     }
 
     Ok(mat)
