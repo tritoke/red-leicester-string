@@ -2,8 +2,6 @@ use clap::Parser;
 use memmap::Mmap;
 use std::{fs::File, io::Write, path::PathBuf, process::ExitCode};
 
-mod codecs;
-
 mod searcher;
 use searcher::Searcher;
 
@@ -48,7 +46,7 @@ fn main() -> ExitCode {
         Searcher::new(args.patterns).expect("Failed to build aho-corasick matcher for patterns");
 
     let mut stdout = std::io::stdout().lock();
-    for (flag, decoder_name, match_direction) in searcher.search(&mmap[..]) {
+    for (flag, decoder_name, match_direction) in searcher.search(&mmap[..], 1) {
         let direction = if match_direction == MatchDirection::Forward {
             "->"
         } else {
