@@ -40,17 +40,16 @@ struct Args {
     strict: bool,
 
     /// How to output the flag
-    #[clap(short, long)]
+    #[clap(short, long, default_value = "with-context")]
     output: OutputMode,
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Eq, Debug, ValueEnum)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, ValueEnum)]
 enum OutputMode {
     /// Output only the flag
     FlagOnly,
 
     /// Output the flag and the context of where it was found
-    #[default]
     WithContext,
 
     /// Output a JSON blob per line with the flag and its context
