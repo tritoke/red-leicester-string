@@ -235,10 +235,16 @@ mod tests {
     #[case("ZmxhZ3s-dWhTKiR9", 
         // All three codecs are valid for this flag, but only one is correct :)
         &[
-        ("flag{", "base64"),
-        ("flag{>uhS*$}", "base64-URL-safe"),
-        ("flag{", "base64-IMAP-modified-UTF7"),
-    ])]
+            ("flag{", "base64"),
+            ("flag{>uhS*$}", "base64-URL-safe"),
+            ("flag{", "base64-IMAP-modified-UTF7"),
+        ]
+    )]
+    #[case("MZWGCZ33M5UW23LFL52GQZK7O5UG63DFL5TGYYLHPU", 
+        &[
+            ("flag{gimme_the_whole_flag}", "base32-RFC-4648"),
+        ]
+    )]
     fn test_codecs(#[case] haystack: impl AsRef<[u8]>, #[case] correct: &[(&str, &str)]) {
         let searcher = Searcher::new(["flag{"]).unwrap();
         let haystack = Stride::new(haystack.as_ref());
