@@ -27,10 +27,6 @@ impl<'h> Input<'h> {
         self.haystack
     }
 
-    fn set_start(&mut self, start: usize) {
-        self.span.start = start;
-    }
-
     fn start(&self) -> usize {
         self.span.start
     }

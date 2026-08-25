@@ -11,6 +11,7 @@ encoding_rs = { version = "0.8.35", default-features = false }
 memchr = { version = "2.8.3", default-features = false }
 memmap = "0.7.0"
 rayon = "1.12.0"
+serde_json = "1.0.151"
 strided = "0.2.9"
 
 [dev-dependencies]

@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use core::fmt;
 use memmap::Mmap;
 use rayon::prelude::*;
@@ -34,16 +34,27 @@ struct Args {
     #[clap(short, long)]
     threads: Option<usize>,
 
-    /// print the context of where the match was found, enable this for an output which is more
-    /// similar to stringcheese
-    #[clap(long, default_value_t = false)]
-    context: bool,
-
     /// don't print the flag if it doesn't end in } this prevents the output of potentially many
     /// partial flags in some cases
     #[clap(long, default_value_t = false)]
     strict: bool,
-    // TODO: Add JSON-LINES output mode
+
+    /// How to output the flag
+    #[clap(short, long)]
+    output: OutputMode,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug, ValueEnum)]
+enum OutputMode {
+    /// Output only the flag
+    FlagOnly,
+
+    /// Output the flag and the context of where it was found
+    #[default]
+    WithContext,
+
+    /// Output a JSON blob per line with the flag and its context
+    JsonLines,
 }
 
 fn main() -> ExitCode {
@@ -80,28 +91,23 @@ fn main() -> ExitCode {
         let stride = pile.stride();
         searcher
             .search(pile)
-            .map(move |(flag, decoder_name, match_direction)| {
-                (
-                    flag,
-                    FlagContext {
-                        decoder_name,
-                        match_direction,
-                        offset,
-                        stride,
-                    },
-                )
+            .map(move |(flag, decoder_name, match_direction)| Finding {
+                flag,
+                context: FlagContext {
+                    decoder_name,
+                    match_direction,
+                    offset,
+                    stride,
+                },
             })
     });
 
-    flags.for_each(|(flag, context)| {
-        if args.strict && !flag.ends_with('}') {
+    flags.for_each(|finding| {
+        if args.strict && !finding.flag.ends_with('}') {
             return;
         }
 
-        if args.context {
-            println!("{context}:");
-        }
-        println!("{flag}");
+        args.output.report(finding);
     });
 
     ExitCode::SUCCESS
@@ -132,5 +138,46 @@ impl fmt::Display for FlagContext {
         }
 
         write!(f, " with decoder {}", self.decoder_name)
+    }
+}
+
+#[derive()]
+struct Finding {
+    flag: String,
+    context: FlagContext,
+}
+
+impl Finding {
+    fn to_json(&self) -> serde_json::Value {
+        let match_direction = if self.context.match_direction == MatchDirection::Forward {
+            "forward"
+        } else {
+            "backward"
+        };
+
+        serde_json::json!({
+            "flag": self.flag,
+            "decoder_name": self.context.decoder_name,
+            "match_direction": match_direction,
+            "offset": self.context.offset,
+            "stride": self.context.stride,
+        })
+    }
+}
+
+impl OutputMode {
+    fn report(&self, finding: Finding) {
+        match self {
+            OutputMode::FlagOnly => {
+                println!("{}", finding.flag);
+            }
+            OutputMode::WithContext => {
+                println!("{}:", finding.context);
+                println!("{}", finding.flag);
+            }
+            OutputMode::JsonLines => {
+                println!("{}", finding.to_json());
+            }
+        }
     }
 }
