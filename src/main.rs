@@ -1,8 +1,9 @@
 use clap::{Parser, ValueEnum};
 use core::fmt;
+use lru::LruCache;
 use memmap::Mmap;
 use rayon::prelude::*;
-use std::{fs::File, path::PathBuf, process::ExitCode};
+use std::{fs::File, num::NonZeroUsize, path::PathBuf, process::ExitCode, sync::Mutex};
 use strided::Stride;
 
 mod searcher;
@@ -19,6 +20,9 @@ struct Args {
     #[clap(short, long)]
     file: PathBuf,
 
+    // TODO: add a -d/--dir option which walks the directory mapping in files and searching for
+    // flags in all files, extra cheese :) and it saves on the cost of creating the NFA as its
+    // shared every time! :D
     /// skip the slow checks. Useful on larger files but you may miss matches
     #[clap(long)]
     fast: bool,
@@ -101,12 +105,31 @@ fn main() -> ExitCode {
             })
     });
 
+    // ensure we don't spam too much with all the various encodings
+    let cache_size = if args.verbose {
+        // we don't cache seen flags in verbose mode
+        unsafe { NonZeroUsize::new_unchecked(1) }
+    } else {
+        // memory is cheap, right???
+        // also if you actually fill this message me lmao
+        unsafe { NonZeroUsize::new_unchecked(10_000) }
+    };
+    let seen_flags = Mutex::new(LruCache::new(cache_size));
+
     flags.for_each(|finding| {
         if args.strict && !finding.flag.ends_with('}') {
             return;
         }
 
-        args.output.report(finding);
+        if let Ok(mut seen) = seen_flags.lock() {
+            // report the flag if we are in verbose mode or if the flag is unseen recently
+            if args.verbose || seen.put(finding.flag.clone(), ()).is_none() {
+                args.output.report(finding);
+            }
+        } else {
+            eprintln!("Failed to acquire lock for seen flags, reporting all flags...");
+            args.output.report(finding);
+        }
     });
 
     ExitCode::SUCCESS

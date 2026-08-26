@@ -62,7 +62,7 @@ impl Searcher {
         })
     }
 
-    fn expand_patterns<I: IntoIterator<Item = P>, P: AsRef<[u8]>>(
+    fn expand_patterns<I: IntoIterator<Item = P>, P: AsRef<str>>(
         patterns: I,
     ) -> (Vec<Box<[u8]>>, Vec<(Decoder, &'static str, MatchDirection)>) {
         let mut encoded_patterns = vec![];
@@ -209,16 +209,25 @@ mod tests {
         let searcher = Searcher::new(["flag{"]).unwrap();
 
         let haystack = Stride::new(haystack.as_ref());
-        let found: Vec<(String, DecoderName, MatchDirection)> = haystack
+        let all_found: Vec<(String, DecoderName, MatchDirection)> = haystack
             .substrides(stride_length)
             .flat_map(|pile| searcher.search(pile))
             .collect();
-        assert_eq!(found.len(), correct.len());
 
-        for ((flag, decoder_name, match_direction), correct) in found.into_iter().zip(correct) {
-            assert_eq!(&flag, correct);
-            assert_eq!(decoder_name, "utf8");
-            assert_eq!(match_direction, correct_direction);
+        // with more codecs it turns out many codecs can decode the flags so just check that all of
+        // the flags are found by the intended codec ignoring if other codecs find them
+        for correct_flag in correct {
+            let mut found = false;
+            for (flag, decoder_name, match_direction) in &all_found {
+                if flag == correct_flag
+                    && *decoder_name == "utf8"
+                    && *match_direction == correct_direction
+                {
+                    found = true;
+                    break;
+                }
+            }
+            assert!(found, "Failed to find {correct_flag} in input")
         }
     }
 

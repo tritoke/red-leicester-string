@@ -3,14 +3,14 @@ pub type Encoded = Box<[u8]>;
 pub type Decoded = Option<Box<[u8]>>;
 pub type Decoder = fn(Encoded) -> Decoded;
 pub type DecoderName = &'static str;
-pub type Codec = fn(&[u8]) -> (Encoded, DecoderName, Decoder);
+pub type Codec = fn(&str) -> (Encoded, DecoderName, Decoder);
 
 fn identity_decoder(buf: Encoded) -> Decoded {
     Some(buf)
 }
 
-fn identity_codec(data: &[u8]) -> (Encoded, &'static str, Decoder) {
-    (Box::from(data), "utf8", identity_decoder)
+fn identity_codec(data: &str) -> (Encoded, &'static str, Decoder) {
+    (Box::from(data.as_bytes()), "utf8", identity_decoder)
 }
 
 macro_rules! base64_codec {
@@ -41,14 +41,14 @@ macro_rules! base64_codec {
             None
         }
 
-        fn $codec(data: &[u8]) -> (Encoded, &'static str, Decoder) {
+        fn $codec(data: &str) -> (Encoded, DecoderName, Decoder) {
             const ENGINE: ::base64::engine::general_purpose::GeneralPurpose =
                 ::base64::engine::general_purpose::GeneralPurpose::new(
                     &$alphabet,
                     ::base64::engine::general_purpose::NO_PAD_INDIFFERENT,
                 );
 
-            let mut encoded = ::base64::engine::Engine::encode(&ENGINE, data);
+            let mut encoded = ::base64::engine::Engine::encode(&ENGINE, data.as_bytes());
             // if the pattern does not fill the final base64 octet then we must trim it to just the
             // prefix that is fully decided by our flag prefix
             if encoded.len() % 3 != 0 {
@@ -106,8 +106,8 @@ macro_rules! base32_codec {
             ::base32::decode($alphabet, to_decode).map(::std::convert::Into::into)
         }
 
-        fn $codec(data: &[u8]) -> (Encoded, &'static str, Decoder) {
-            let mut encoded = ::base32::encode($alphabet, data);
+        fn $codec(data: &str) -> (Encoded, DecoderName, Decoder) {
+            let mut encoded = ::base32::encode($alphabet, data.as_bytes());
             if encoded.len() % 7 != 0 {
                 encoded.pop();
             }
@@ -154,8 +154,71 @@ base32_codec!(
     base32_z_codec
 );
 
+macro_rules! encoding_rs_codec {
+    ($encoding:path, $decoder:ident, $codec_name:literal, $codec:ident) => {
+        fn $decoder(buf: Encoded) -> Decoded {
+            let (decoded, _, _) = $encoding.decode(buf.as_ref());
+            // Cow -> String -> Vec<[u8]> -> [u8]
+            Some(decoded.into_owned().into_bytes().into())
+        }
+
+        pub fn $codec(data: &str) -> (Encoded, DecoderName, Decoder) {
+            let (encoded, _, _) = $encoding.encode(data);
+            (encoded.into_owned().into(), $codec_name, $decoder)
+        }
+    };
+}
+
+// put these in a module so I can format them nicely
+#[rustfmt::skip]
+mod encoding_rs_codecs {
+    use super::*;
+
+    encoding_rs_codec!(encoding_rs::BIG5,           big5_decoder,           "encoding-BIG5",           big5_codec);
+    encoding_rs_codec!(encoding_rs::EUC_JP,         euc_jp_decoder,         "encoding-EUC_JP",         euc_jp_codec);
+    encoding_rs_codec!(encoding_rs::EUC_KR,         euc_kr_decoder,         "encoding-EUC_KR",         euc_kr_codec);
+    encoding_rs_codec!(encoding_rs::GB18030,        gb18030_decoder,        "encoding-GB18030",        gb18030_codec);
+    encoding_rs_codec!(encoding_rs::GBK,            gbk_decoder,            "encoding-GBK",            gbk_codec);
+    encoding_rs_codec!(encoding_rs::IBM866,         ibm866_decoder,         "encoding-IBM866",         ibm866_codec);
+    encoding_rs_codec!(encoding_rs::ISO_8859_2,     iso_8859_2_decoder,     "encoding-ISO_8859_2",     iso_8859_2_codec);
+    encoding_rs_codec!(encoding_rs::ISO_8859_3,     iso_8859_3_decoder,     "encoding-ISO_8859_3",     iso_8859_3_codec);
+    encoding_rs_codec!(encoding_rs::ISO_8859_4,     iso_8859_4_decoder,     "encoding-ISO_8859_4",     iso_8859_4_codec);
+    encoding_rs_codec!(encoding_rs::ISO_8859_5,     iso_8859_5_decoder,     "encoding-ISO_8859_5",     iso_8859_5_codec);
+    encoding_rs_codec!(encoding_rs::ISO_8859_6,     iso_8859_6_decoder,     "encoding-ISO_8859_6",     iso_8859_6_codec);
+    encoding_rs_codec!(encoding_rs::ISO_8859_7,     iso_8859_7_decoder,     "encoding-ISO_8859_7",     iso_8859_7_codec);
+    encoding_rs_codec!(encoding_rs::ISO_8859_8,     iso_8859_8_decoder,     "encoding-ISO_8859_8",     iso_8859_8_codec);
+    encoding_rs_codec!(encoding_rs::ISO_8859_8_I,   iso_8859_8_i_decoder,   "encoding-ISO_8859_8_I",   iso_8859_8_i_codec);
+    encoding_rs_codec!(encoding_rs::ISO_8859_10,    iso_8859_10_decoder,    "encoding-ISO_8859_10",    iso_8859_10_codec);
+    encoding_rs_codec!(encoding_rs::ISO_8859_13,    iso_8859_13_decoder,    "encoding-ISO_8859_13",    iso_8859_13_codec);
+    encoding_rs_codec!(encoding_rs::ISO_8859_14,    iso_8859_14_decoder,    "encoding-ISO_8859_14",    iso_8859_14_codec);
+    encoding_rs_codec!(encoding_rs::ISO_8859_15,    iso_8859_15_decoder,    "encoding-ISO_8859_15",    iso_8859_15_codec);
+    encoding_rs_codec!(encoding_rs::ISO_8859_16,    iso_8859_16_decoder,    "encoding-ISO_8859_16",    iso_8859_16_codec);
+    encoding_rs_codec!(encoding_rs::KOI8_R,         koi8_r_decoder,         "encoding-KOI8_R",         koi8_r_codec);
+    encoding_rs_codec!(encoding_rs::KOI8_U,         koi8_u_decoder,         "encoding-KOI8_U",         koi8_u_codec);
+    encoding_rs_codec!(encoding_rs::MACINTOSH,      macintosh_decoder,      "encoding-MACINTOSH",      macintosh_codec);
+    encoding_rs_codec!(encoding_rs::SHIFT_JIS,      shift_jis_decoder,      "encoding-SHIFT_JIS",      shift_jis_codec);
+    encoding_rs_codec!(encoding_rs::UTF_16BE,       utf_16be_decoder,       "encoding-UTF_16BE",       utf_16be_codec);
+    encoding_rs_codec!(encoding_rs::UTF_16LE,       utf_16le_decoder,       "encoding-UTF_16LE",       utf_16le_codec);
+    encoding_rs_codec!(encoding_rs::WINDOWS_874,    windows_874_decoder,    "encoding-WINDOWS_874",    windows_874_codec);
+    encoding_rs_codec!(encoding_rs::WINDOWS_1250,   windows_1250_decoder,   "encoding-WINDOWS_1250",   windows_1250_codec);
+    encoding_rs_codec!(encoding_rs::WINDOWS_1251,   windows_1251_decoder,   "encoding-WINDOWS_1251",   windows_1251_codec);
+    encoding_rs_codec!(encoding_rs::WINDOWS_1252,   windows_1252_decoder,   "encoding-WINDOWS_1252",   windows_1252_codec);
+    encoding_rs_codec!(encoding_rs::WINDOWS_1253,   windows_1253_decoder,   "encoding-WINDOWS_1253",   windows_1253_codec);
+    encoding_rs_codec!(encoding_rs::WINDOWS_1254,   windows_1254_decoder,   "encoding-WINDOWS_1254",   windows_1254_codec);
+    encoding_rs_codec!(encoding_rs::WINDOWS_1255,   windows_1255_decoder,   "encoding-WINDOWS_1255",   windows_1255_codec);
+    encoding_rs_codec!(encoding_rs::WINDOWS_1256,   windows_1256_decoder,   "encoding-WINDOWS_1256",   windows_1256_codec);
+    encoding_rs_codec!(encoding_rs::WINDOWS_1257,   windows_1257_decoder,   "encoding-WINDOWS_1257",   windows_1257_codec);
+    encoding_rs_codec!(encoding_rs::WINDOWS_1258,   windows_1258_decoder,   "encoding-WINDOWS_1258",   windows_1258_codec);
+    encoding_rs_codec!(encoding_rs::X_MAC_CYRILLIC, x_mac_cyrillic_decoder, "encoding-X_MAC_CYRILLIC", x_mac_cyrillic_codec);
+    encoding_rs_codec!(encoding_rs::X_USER_DEFINED, x_user_defined_decoder, "encoding-X_USER_DEFINED", x_user_defined_codec);
+}
+
+use encoding_rs_codecs::*;
+
 /// Every codec
-pub const ALL_CODECS: [Codec; 12] = [
+/// NOTE: matches for these are returned in the order they are defined here so less likely / weirder
+/// codecs should be put further down
+pub const ALL_CODECS: [Codec; 49] = [
     identity_codec,
     // base64 codecs
     base64_codec,
@@ -170,21 +233,62 @@ pub const ALL_CODECS: [Codec; 12] = [
     base32_rfc468_hex_codec,
     base32_rfc468_hex_lower_codec,
     base32_z_codec,
+    // encoding_rs codecs
+    big5_codec,
+    euc_jp_codec,
+    euc_kr_codec,
+    gb18030_codec,
+    gbk_codec,
+    ibm866_codec,
+    iso_8859_2_codec,
+    iso_8859_3_codec,
+    iso_8859_4_codec,
+    iso_8859_5_codec,
+    iso_8859_6_codec,
+    iso_8859_7_codec,
+    iso_8859_8_codec,
+    iso_8859_8_i_codec,
+    iso_8859_10_codec,
+    iso_8859_13_codec,
+    iso_8859_14_codec,
+    iso_8859_15_codec,
+    iso_8859_16_codec,
+    koi8_r_codec,
+    koi8_u_codec,
+    macintosh_codec,
+    shift_jis_codec,
+    utf_16be_codec,
+    utf_16le_codec,
+    windows_874_codec,
+    windows_1250_codec,
+    windows_1251_codec,
+    windows_1252_codec,
+    windows_1253_codec,
+    windows_1254_codec,
+    windows_1255_codec,
+    windows_1256_codec,
+    windows_1257_codec,
+    windows_1258_codec,
+    x_mac_cyrillic_codec,
+    x_user_defined_codec,
 ];
 
 #[cfg(test)]
 mod tests {
-    use rand::Rng as _;
-
     use super::*;
 
     #[test]
     fn all_codecs_roundtrip_to_prefix() {
         let mut random_data = Vec::with_capacity(1000);
         random_data.resize(random_data.capacity(), 0);
-        rand::rng().fill_bytes(&mut random_data);
+        for b in random_data.iter_mut() {
+            *b = rand::random_range(0..=127);
+        }
+        // all data is valid ascii so this is fine
+        let random_str = unsafe { std::str::from_utf8_unchecked(&random_data) };
+
         for codec in ALL_CODECS {
-            let (encoded, name, decoder) = codec(&random_data);
+            let (encoded, name, decoder) = codec(random_str);
             let decoded = &decoder(encoded).unwrap()[..];
 
             for (dec, cor) in decoded.iter().zip(&random_data) {
