@@ -224,6 +224,39 @@ fn utf32_be_codec(data: &str) -> (Encoded, DecoderName, Decoder) {
     (utf32_bytes.into(), "UTF-32-BE", utf32_be_decoder)
 }
 
+fn base10_ascii_decoder(buf: Encoded) -> Decoded {
+    // this is a strict upper bound from the length of buf
+    let mut acc = String::with_capacity(buf.len() / 2);
+
+    let mut cur = 0;
+    for c in buf {
+        if !c.is_ascii_digit() {
+            break;
+        }
+
+        cur *= 10;
+        cur += c - b'0';
+
+        if cur >= b' ' {
+            acc.push(cur as char);
+            cur = 0;
+        }
+    }
+
+    Some(acc.into_bytes().into())
+}
+
+fn base10_ascii_codec(data: &str) -> (Encoded, DecoderName, Decoder) {
+    use std::io::Write;
+
+    let mut buf = Vec::with_capacity(data.chars().count() * 3);
+    for c in data.chars() {
+        write!(&mut buf, "{}", c as u32).unwrap();
+    }
+
+    (buf.into(), "base10-ascii", base10_ascii_decoder)
+}
+
 macro_rules! encoding_rs_codec {
     ($encoding:path, $decoder:ident, $codec_name:literal, $codec:ident) => {
         fn $decoder(buf: Encoded) -> Decoded {
@@ -281,12 +314,14 @@ mod encoding_rs_codecs {
     encoding_rs_codec!(encoding_rs::X_USER_DEFINED, x_user_defined_decoder, "encoding-X_USER_DEFINED", x_user_defined_codec);
 }
 
+use core::fmt::NumBuffer;
+
 use encoding_rs_codecs::*;
 
 /// Every codec
 /// NOTE: matches for these are returned in the order they are defined here so less likely / weirder
 /// codecs should be put further down
-pub const ALL_CODECS: [Codec; 51] = [
+pub const ALL_CODECS: [Codec; 52] = [
     identity_codec,
     // base64 codecs
     base64_codec,
@@ -306,6 +341,8 @@ pub const ALL_CODECS: [Codec; 51] = [
     utf16_be_codec,
     utf32_le_codec,
     utf32_be_codec,
+    // funny ones
+    base10_ascii_codec,
     // encoding_rs codecs
     big5_codec,
     euc_jp_codec,
