@@ -154,6 +154,76 @@ base32_codec!(
     base32_z_codec
 );
 
+fn utf16_le_decoder(buf: Encoded) -> Decoded {
+    let decoded = String::from_utf16le_lossy(&buf);
+    Some(decoded.into_bytes().into())
+}
+
+fn utf16_le_codec(data: &str) -> (Encoded, DecoderName, Decoder) {
+    let utf16_codepoints = data.encode_utf16();
+    let utf16_bytes: Vec<u8> = utf16_codepoints
+        .flat_map(|codepoint| codepoint.to_le_bytes())
+        .collect();
+
+    (utf16_bytes.into(), "UTF-16-LE", utf16_le_decoder)
+}
+
+fn utf16_be_decoder(buf: Encoded) -> Decoded {
+    let decoded = String::from_utf16be_lossy(&buf);
+    Some(decoded.into_bytes().into())
+}
+
+fn utf16_be_codec(data: &str) -> (Encoded, DecoderName, Decoder) {
+    let utf16_codepoints = data.encode_utf16();
+    let utf16_bytes: Vec<u8> = utf16_codepoints
+        .flat_map(|codepoint| codepoint.to_be_bytes())
+        .collect();
+
+    (utf16_bytes.into(), "UTF-16-BE", utf16_be_decoder)
+}
+
+fn utf32_le_decoder(buf: Encoded) -> Decoded {
+    let (utf32_byte_pairs, _trailing): (&[[u8; 4]], &[u8]) = buf.as_chunks();
+    let decoded: String = utf32_byte_pairs
+        .iter()
+        .map(|codepoint| {
+            char::from_u32(u32::from_le_bytes(*codepoint)).unwrap_or(char::REPLACEMENT_CHARACTER)
+        })
+        .collect();
+
+    Some(decoded.into_bytes().into())
+}
+
+fn utf32_le_codec(data: &str) -> (Encoded, DecoderName, Decoder) {
+    let utf32_codepoints = data.chars().map(|c| c as u32);
+    let utf32_bytes: Vec<u8> = utf32_codepoints
+        .flat_map(|codepoint| codepoint.to_le_bytes())
+        .collect();
+
+    (utf32_bytes.into(), "UTF-32-LE", utf32_le_decoder)
+}
+
+fn utf32_be_decoder(buf: Encoded) -> Decoded {
+    let (utf32_byte_pairs, _trailing): (&[[u8; 4]], &[u8]) = buf.as_chunks();
+    let decoded: String = utf32_byte_pairs
+        .iter()
+        .map(|codepoint| {
+            char::from_u32(u32::from_be_bytes(*codepoint)).unwrap_or(char::REPLACEMENT_CHARACTER)
+        })
+        .collect();
+
+    Some(decoded.into_bytes().into())
+}
+
+fn utf32_be_codec(data: &str) -> (Encoded, DecoderName, Decoder) {
+    let utf32_codepoints = data.chars().map(|c| c as u32);
+    let utf32_bytes: Vec<u8> = utf32_codepoints
+        .flat_map(|codepoint| codepoint.to_be_bytes())
+        .collect();
+
+    (utf32_bytes.into(), "UTF-32-BE", utf32_be_decoder)
+}
+
 macro_rules! encoding_rs_codec {
     ($encoding:path, $decoder:ident, $codec_name:literal, $codec:ident) => {
         fn $decoder(buf: Encoded) -> Decoded {
@@ -197,8 +267,6 @@ mod encoding_rs_codecs {
     encoding_rs_codec!(encoding_rs::KOI8_U,         koi8_u_decoder,         "encoding-KOI8_U",         koi8_u_codec);
     encoding_rs_codec!(encoding_rs::MACINTOSH,      macintosh_decoder,      "encoding-MACINTOSH",      macintosh_codec);
     encoding_rs_codec!(encoding_rs::SHIFT_JIS,      shift_jis_decoder,      "encoding-SHIFT_JIS",      shift_jis_codec);
-    encoding_rs_codec!(encoding_rs::UTF_16BE,       utf_16be_decoder,       "encoding-UTF_16BE",       utf_16be_codec);
-    encoding_rs_codec!(encoding_rs::UTF_16LE,       utf_16le_decoder,       "encoding-UTF_16LE",       utf_16le_codec);
     encoding_rs_codec!(encoding_rs::WINDOWS_874,    windows_874_decoder,    "encoding-WINDOWS_874",    windows_874_codec);
     encoding_rs_codec!(encoding_rs::WINDOWS_1250,   windows_1250_decoder,   "encoding-WINDOWS_1250",   windows_1250_codec);
     encoding_rs_codec!(encoding_rs::WINDOWS_1251,   windows_1251_decoder,   "encoding-WINDOWS_1251",   windows_1251_codec);
@@ -218,7 +286,7 @@ use encoding_rs_codecs::*;
 /// Every codec
 /// NOTE: matches for these are returned in the order they are defined here so less likely / weirder
 /// codecs should be put further down
-pub const ALL_CODECS: [Codec; 47] = [
+pub const ALL_CODECS: [Codec; 51] = [
     identity_codec,
     // base64 codecs
     base64_codec,
@@ -233,6 +301,11 @@ pub const ALL_CODECS: [Codec; 47] = [
     base32_rfc468_hex_codec,
     base32_rfc468_hex_lower_codec,
     base32_z_codec,
+    // stdlib codecs
+    utf16_le_codec,
+    utf16_be_codec,
+    utf32_le_codec,
+    utf32_be_codec,
     // encoding_rs codecs
     big5_codec,
     euc_jp_codec,
@@ -273,13 +346,11 @@ pub const ALL_CODECS: [Codec; 47] = [
 
 #[cfg(test)]
 mod tests {
-    use hex::ToHex;
-
     use super::*;
 
     #[test]
     fn all_codecs_roundtrip_to_prefix() {
-        let mut random_data = Vec::with_capacity(1000);
+        let mut random_data = Vec::with_capacity(999);
         random_data.resize(random_data.capacity(), 0);
         for b in random_data.iter_mut() {
             *b = rand::random_range(0..=127);
@@ -290,13 +361,6 @@ mod tests {
         for codec in ALL_CODECS {
             let (encoded, name, decoder) = codec(random_str);
             let decoded = &decoder(encoded.clone()).unwrap()[..];
-            if name.contains("UTF_16") {
-                dbg!(name);
-                dbg!(random_str.as_bytes().encode_hex::<String>());
-                dbg!(encoded.encode_hex::<String>());
-                dbg!(decoded.encode_hex::<String>());
-            }
-
             for (dec, cor) in decoded.iter().zip(&random_data) {
                 assert_eq!(dec, cor, "Codec {name} roundtrip failed");
             }
