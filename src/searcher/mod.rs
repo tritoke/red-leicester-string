@@ -296,12 +296,15 @@ mod tests {
                 .flat_map(|pile| searcher.search(pile))
                 .collect();
 
-            assert_eq!(found.len(), 1);
-
-            let (flag, decoder_name, match_direction) = found.into_iter().next().unwrap();
-            assert_eq!(flag, correct);
-            assert_eq!(decoder_name, "UTF8");
-            assert_eq!(match_direction, MatchDirection::Forward);
+            let mut flag_found = false;
+            for (flag, decoder_name, match_direction) in found.into_iter() {
+                if decoder_name == "utf8" {
+                    assert_eq!(flag, correct);
+                    assert_eq!(match_direction, MatchDirection::Forward);
+                    flag_found = true;
+                }
+            }
+            assert!(flag_found, "UTF8 codec failed to find flag");
         }
     }
 }

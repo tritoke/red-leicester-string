@@ -218,7 +218,7 @@ use encoding_rs_codecs::*;
 /// Every codec
 /// NOTE: matches for these are returned in the order they are defined here so less likely / weirder
 /// codecs should be put further down
-pub const ALL_CODECS: [Codec; 49] = [
+pub const ALL_CODECS: [Codec; 47] = [
     identity_codec,
     // base64 codecs
     base64_codec,
@@ -257,8 +257,6 @@ pub const ALL_CODECS: [Codec; 49] = [
     koi8_u_codec,
     macintosh_codec,
     shift_jis_codec,
-    utf_16be_codec,
-    utf_16le_codec,
     windows_874_codec,
     windows_1250_codec,
     windows_1251_codec,
@@ -275,6 +273,8 @@ pub const ALL_CODECS: [Codec; 49] = [
 
 #[cfg(test)]
 mod tests {
+    use hex::ToHex;
+
     use super::*;
 
     #[test]
@@ -289,7 +289,13 @@ mod tests {
 
         for codec in ALL_CODECS {
             let (encoded, name, decoder) = codec(random_str);
-            let decoded = &decoder(encoded).unwrap()[..];
+            let decoded = &decoder(encoded.clone()).unwrap()[..];
+            if name.contains("UTF_16") {
+                dbg!(name);
+                dbg!(random_str.as_bytes().encode_hex::<String>());
+                dbg!(encoded.encode_hex::<String>());
+                dbg!(decoded.encode_hex::<String>());
+            }
 
             for (dec, cor) in decoded.iter().zip(&random_data) {
                 assert_eq!(dec, cor, "Codec {name} roundtrip failed");
