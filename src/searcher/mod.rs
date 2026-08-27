@@ -7,10 +7,13 @@ use std::{
 use aho_corasick::{Match, automaton::Automaton, nfa};
 
 mod codecs;
-use codecs::{ALL_CODECS, Decoder, DecoderName};
+use codecs::{ALL_CODEC_GENERATORS, DecoderName};
 use strided::Stride;
 
-use crate::searcher::strided_ahocorasick::StridedFindOverlapping;
+use crate::searcher::{
+    codecs::{Codec, Decoded, DecoderMetadata, Encoded},
+    strided_ahocorasick::StridedFindOverlapping,
+};
 
 mod strided_ahocorasick;
 
@@ -26,9 +29,16 @@ impl<A> AcAutomaton for A where
 {
 }
 
+struct DecodingContext {
+    decoder: fn(Encoded, DecoderMetadata) -> Decoded,
+    name: &'static str,
+    metadata: DecoderMetadata,
+    match_direction: MatchDirection,
+}
+
 pub struct Searcher {
     matcher: Arc<dyn AcAutomaton>,
-    decoders: Vec<(Decoder, DecoderName, MatchDirection)>,
+    decoder_mapping: Vec<DecodingContext>,
     unexpanded: Box<[String]>,
 }
 
@@ -40,7 +50,7 @@ impl Searcher {
             .into_iter()
             .map(|pat| pat.as_ref().to_owned())
             .collect();
-        let (patterns, decoders) = Self::expand_patterns(unexpanded.clone());
+        let (patterns, decoder_mapping) = Self::expand_patterns(unexpanded.clone());
 
         // Build a non-contiguous NFA (NNFA) and then try to upgrade it to contiguous one
         // if this fails just fall back to the NNFA
@@ -57,32 +67,49 @@ impl Searcher {
 
         Ok(Self {
             matcher,
-            decoders,
+            decoder_mapping,
             unexpanded: unexpanded.into(),
         })
     }
 
     fn expand_patterns<I: IntoIterator<Item = P>, P: AsRef<str>>(
         patterns: I,
-    ) -> (Vec<Box<[u8]>>, Vec<(Decoder, &'static str, MatchDirection)>) {
+    ) -> (Vec<Box<[u8]>>, Vec<DecodingContext>) {
         let mut encoded_patterns = vec![];
         let mut decoders = vec![];
 
         for pattern in patterns.into_iter() {
             let pat = pattern.as_ref();
 
-            for codec in ALL_CODECS {
-                let (encoded, name, decoder) = codec(pat);
+            for codec_generator in ALL_CODEC_GENERATORS {
+                for codec in codec_generator(pat) {
+                    let Codec {
+                        encoded,
+                        name,
+                        decoder,
+                        metadata,
+                    } = codec;
 
-                // also generate the backwards version of the pattern
-                let mut reverse_encoded = Vec::from(encoded.clone());
-                reverse_encoded.reverse();
+                    // also generate the backwards version of the pattern
+                    let mut reverse_encoded = Vec::from(encoded.clone());
+                    reverse_encoded.reverse();
 
-                encoded_patterns.push(encoded);
-                decoders.push((decoder, name, MatchDirection::Forward));
+                    encoded_patterns.push(encoded);
+                    decoders.push(DecodingContext {
+                        decoder,
+                        name,
+                        metadata: metadata.clone(),
+                        match_direction: MatchDirection::Forward,
+                    });
 
-                encoded_patterns.push(Box::from(reverse_encoded));
-                decoders.push((decoder, name, MatchDirection::Backward));
+                    encoded_patterns.push(Box::from(reverse_encoded));
+                    decoders.push(DecodingContext {
+                        decoder,
+                        name,
+                        metadata: metadata,
+                        match_direction: MatchDirection::Backward,
+                    });
+                }
             }
         }
 
@@ -102,14 +129,19 @@ impl Searcher {
         self.find_iter(haystack)
             .filter_map(move |match_| {
                 // Look up the decoder for this match and whether it was a match going forwards or backwards
-                let (decoder, name, direction) = self.decoders[match_.pattern().as_usize()];
+                let DecodingContext {
+                    decoder,
+                    name,
+                    ref metadata,
+                    match_direction,
+                } = self.decoder_mapping[match_.pattern().as_usize()];
 
                 // Extend the match in the correct direcion, i.e.
                 // if we matched "flag{" going forwards then walk forwards to grab more of the input
                 // to find the rest of the flag
-                let to_decode = Self::expand_search(haystack, match_, direction);
-                let decoded = decoder(to_decode)?;
-                Some((decoded, name, direction))
+                let to_decode = Self::expand_search(haystack, match_, match_direction);
+                let decoded = decoder(to_decode, metadata.clone())?;
+                Some((decoded, name, match_direction))
             })
             .map(|(decoded, name, direction)| {
                 let flag = Self::postprocess_match(decoded);
@@ -166,7 +198,7 @@ impl Searcher {
         owned.shrink_to_fit();
 
         // SAFETY: owned must contain only valid UTF8 data as either:
-        // 1. we truncated to utf8_valid_end and thus all the data before this is utf8
+        // 1. we truncated to utf8_valid_end and thus all the data before this is UTF8
         // 2. we hit closing_pos, which is strictly shorter than utf8_valid_end and is a
         //    unicode codepoint boundary and is thus safe to truncate to.
         unsafe { String::from_utf8_unchecked(owned) }
@@ -214,13 +246,15 @@ mod tests {
             .flat_map(|pile| searcher.search(pile))
             .collect();
 
+        dbg!(&all_found);
+
         // with more codecs it turns out many codecs can decode the flags so just check that all of
         // the flags are found by the intended codec ignoring if other codecs find them
         for correct_flag in correct {
             let mut found = false;
             for (flag, decoder_name, match_direction) in &all_found {
                 if flag == correct_flag
-                    && *decoder_name == "utf8"
+                    && *decoder_name == "UTF8"
                     && *match_direction == correct_direction
                 {
                     found = true;
@@ -298,7 +332,7 @@ mod tests {
 
             let mut flag_found = false;
             for (flag, decoder_name, match_direction) in found.into_iter() {
-                if decoder_name == "utf8" {
+                if decoder_name == "UTF8" {
                     assert_eq!(flag, correct);
                     assert_eq!(match_direction, MatchDirection::Forward);
                     flag_found = true;
