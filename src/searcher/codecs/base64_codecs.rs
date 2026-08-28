@@ -1,42 +1,31 @@
+use base64::{
+    alphabet,
+    engine::general_purpose::{
+        NO_PAD_INDIFFERENT, STANDARD_NO_PAD_INDIFFERENT, URL_SAFE_NO_PAD_INDIFFERENT,
+    },
+};
+
 use super::*;
 
 const BCRYPT_NO_PAD_INDIFFERENT: base64::engine::GeneralPurpose =
-    base64::engine::GeneralPurpose::new(
-        &base64::alphabet::BCRYPT,
-        ::base64::engine::general_purpose::NO_PAD_INDIFFERENT,
-    );
+    base64::engine::GeneralPurpose::new(&alphabet::BCRYPT, NO_PAD_INDIFFERENT);
 
 const BIN_HEX_NO_PAD_INDIFFERENT: base64::engine::GeneralPurpose =
-    base64::engine::GeneralPurpose::new(
-        &base64::alphabet::BIN_HEX,
-        ::base64::engine::general_purpose::NO_PAD_INDIFFERENT,
-    );
+    base64::engine::GeneralPurpose::new(&alphabet::BIN_HEX, NO_PAD_INDIFFERENT);
 
 const CRYPT_NO_PAD_INDIFFERENT: base64::engine::GeneralPurpose =
-    base64::engine::GeneralPurpose::new(
-        &base64::alphabet::CRYPT,
-        base64::engine::general_purpose::NO_PAD_INDIFFERENT,
-    );
+    base64::engine::GeneralPurpose::new(&alphabet::CRYPT, NO_PAD_INDIFFERENT);
 
 const IMAP_MUTF7_NO_PAD_INDIFFERENT: base64::engine::GeneralPurpose =
-    base64::engine::GeneralPurpose::new(
-        &base64::alphabet::IMAP_MUTF7,
-        ::base64::engine::general_purpose::NO_PAD_INDIFFERENT,
-    );
+    base64::engine::GeneralPurpose::new(&alphabet::IMAP_MUTF7, NO_PAD_INDIFFERENT);
 
-const BASE64_ENGINES: [(&'static base64::engine::GeneralPurpose, DecoderName); 6] = [
-    (
-        &base64::engine::general_purpose::STANDARD_NO_PAD_INDIFFERENT,
-        "base64",
-    ),
-    (
-        &base64::engine::general_purpose::URL_SAFE_NO_PAD_INDIFFERENT,
-        "base64-URL-safe",
-    ),
-    (&BCRYPT_NO_PAD_INDIFFERENT, "base64-bcrypt"),
-    (&BIN_HEX_NO_PAD_INDIFFERENT, "base64-bin-hex"),
-    (&CRYPT_NO_PAD_INDIFFERENT, "base64-crypt"),
-    (&IMAP_MUTF7_NO_PAD_INDIFFERENT, "base64-IMAP-modified-UTF7"),
+const BASE64_ENGINES: &'static [(base64::engine::GeneralPurpose, DecoderName)] = &[
+    (STANDARD_NO_PAD_INDIFFERENT, "base64"),
+    (URL_SAFE_NO_PAD_INDIFFERENT, "base64-URL-safe"),
+    (BCRYPT_NO_PAD_INDIFFERENT, "base64-bcrypt"),
+    (BIN_HEX_NO_PAD_INDIFFERENT, "base64-bin-hex"),
+    (CRYPT_NO_PAD_INDIFFERENT, "base64-crypt"),
+    (IMAP_MUTF7_NO_PAD_INDIFFERENT, "base64-IMAP-modified-UTF7"),
 ];
 
 fn base64_decoder(buf: Encoded, meta: DecoderMetadata) -> Decoded {

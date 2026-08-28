@@ -1,6 +1,6 @@
 use super::*;
 
-const ENCODINGS: [(&'static encoding_rs::Encoding, &'static str); 35] = [
+const ENCODINGS: &'static [(&'static encoding_rs::Encoding, &'static str)] = &[
     (encoding_rs::BIG5, "encoding-BIG5"),
     (encoding_rs::EUC_JP, "encoding-EUC_JP"),
     (encoding_rs::EUC_KR, "encoding-EUC_KR"),
@@ -54,7 +54,7 @@ pub(super) fn encoding_rs_codecs(data: &str) -> Vec<Codec> {
             encoded: encoded.into_owned().into(),
             name: codec_name,
             decoder: encoding_rs_decoder,
-            metadata: Some(encoding as &dyn ThreadSafeAny),
+            metadata: Some(*encoding as &dyn ThreadSafeAny),
         });
     }
 

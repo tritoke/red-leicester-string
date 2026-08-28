@@ -38,7 +38,7 @@ fn retrieve_metadata<T>(meta: DecoderMetadata) -> &'static T {
 
 // NOTE: matches for these are returned in the order they are defined here so less likely / weirder
 // codecs should be put further down
-pub const ALL_CODEC_GENERATORS: [CodecGenerator; 5] = [
+pub const ALL_CODEC_GENERATORS: &'static [CodecGenerator] = &[
     common_encodings::common_encodings,
     base64_codecs::base64_codecs,
     base32_codecs::base32_codecs,
