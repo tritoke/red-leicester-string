@@ -3,13 +3,21 @@ use core::fmt;
 use lru::LruCache;
 use memmap::Mmap;
 use rayon::prelude::*;
-use std::{fs::File, num::NonZeroUsize, path::PathBuf, process::ExitCode, sync::Mutex};
+use std::{
+    fs::File,
+    num::NonZeroUsize,
+    path::PathBuf,
+    process::ExitCode,
+    sync::{Mutex, atomic::AtomicBool},
+};
 use strided::Stride;
 
 mod searcher;
 use searcher::Searcher;
 
 use crate::searcher::MatchDirection;
+
+static GAMBLE: AtomicBool = AtomicBool::new(false);
 
 /// Find flags automatically in CTF challenges.
 /// This looks for flags in the provided files using searches similar to strings+grep,
@@ -46,6 +54,11 @@ struct Args {
     /// How to output the flag
     #[clap(short, long, default_value = "with-context")]
     output: OutputMode,
+
+    /// Enable absolutely every codec! this makes building the matching automaton about 100x slower!
+    /// and can make searching around 4x slower
+    #[clap(long, default_value_t = false)]
+    gamble: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, ValueEnum)]
@@ -68,11 +81,18 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
+    if args.gamble {
+        GAMBLE.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
     let file = File::open(args.file).expect("Failed to open file");
     let mmap = unsafe { Mmap::map(&file) }.expect("Failed to mmap file");
 
+    let before = std::time::Instant::now();
     let searcher =
         Searcher::new(args.patterns).expect("Failed to build aho-corasick matcher for patterns");
+    let took = std::time::Instant::now().duration_since(before);
+    dbg!(took);
 
     if let Some(threads) = args.threads {
         rayon::ThreadPoolBuilder::new()
@@ -116,6 +136,7 @@ fn main() -> ExitCode {
     };
     let seen_flags = Mutex::new(LruCache::new(cache_size));
 
+    let before = std::time::Instant::now();
     flags.for_each(|finding| {
         if args.strict && !finding.flag.ends_with('}') {
             return;
@@ -131,6 +152,8 @@ fn main() -> ExitCode {
             args.output.report(finding);
         }
     });
+    let took = std::time::Instant::now().duration_since(before);
+    dbg!(took);
 
     ExitCode::SUCCESS
 }

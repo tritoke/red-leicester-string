@@ -60,6 +60,11 @@ mod tests {
         // all data is valid ascii so this is fine
         let random_str = unsafe { std::str::from_utf8_unchecked(&random_data) };
 
+        // if we are running in release mode include every codec
+        if !cfg!(debug_assertions) {
+            crate::GAMBLE.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+
         for codec_generator in ALL_CODEC_GENERATORS {
             for codec in codec_generator(random_str) {
                 let Codec {

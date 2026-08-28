@@ -225,6 +225,7 @@ fn bytewise_binary_decoder(mut buf: Encoded, meta: DecoderMetadata) -> MaybeDeco
 static BYTEWISE_DECODER_NAMES: LazyLock<Box<[((u8, u8), String)]>> = LazyLock::new(|| {
     let mut names = Vec::with_capacity(255 * 256);
 
+    let gamble = crate::GAMBLE.load(std::sync::atomic::Ordering::Relaxed);
     for zero_byte in u8::MIN..=u8::MAX {
         for one_byte in u8::MIN..=u8::MAX {
             if zero_byte == one_byte {
@@ -233,6 +234,14 @@ static BYTEWISE_DECODER_NAMES: LazyLock<Box<[((u8, u8), String)]>> = LazyLock::n
 
             let codec_name = format!("binary-0=0x{zero_byte:02x}-1=0x{one_byte:02x}");
             names.push(((zero_byte, one_byte), codec_name));
+
+            if !gamble {
+                break;
+            }
+        }
+
+        if !gamble {
+            break;
         }
     }
 
@@ -255,7 +264,6 @@ fn binary_codecs(data: &str) -> Vec<Codec> {
         metadata: None,
     });
 
-    // TODO: decide whether I need to gate this behind a flag if it slows shit down a bunch 😂
     for (pair @ (zero_byte, one_byte), decoder_name) in BYTEWISE_DECODER_NAMES.iter() {
         let mut modified_binary = binary.clone();
         for b in &mut modified_binary {
