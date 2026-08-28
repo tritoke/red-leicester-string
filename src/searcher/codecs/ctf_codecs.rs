@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use super::*;
 
 fn base10_ascii_decoder(buf: Encoded, _meta: DecoderMetadata) -> MaybeDecoded {
@@ -186,6 +188,10 @@ fn decode_binary_block(block: &[u8; 8]) -> Option<u8> {
 }
 
 fn binary_decoder(buf: Encoded, _meta: DecoderMetadata) -> MaybeDecoded {
+    binary_decoder_inner(&buf)
+}
+
+fn binary_decoder_inner(buf: &[u8]) -> MaybeDecoded {
     let (buf_blocks, _trailing) = buf.as_chunks::<8>();
 
     let decoded: Vec<u8> = buf_blocks
@@ -199,6 +205,40 @@ fn binary_decoder(buf: Encoded, _meta: DecoderMetadata) -> MaybeDecoded {
     Some(decoded.into())
 }
 
+fn bytewise_binary_decoder(mut buf: Encoded, meta: DecoderMetadata) -> MaybeDecoded {
+    let &(zero_byte, one_byte): &(u8, u8) = retrieve_metadata(meta);
+
+    for (i, b) in buf.iter_mut().enumerate() {
+        if *b == zero_byte {
+            *b = b'0';
+        } else if *b == one_byte {
+            *b = b'1';
+        } else {
+            return binary_decoder_inner(&buf[..i]);
+        }
+    }
+
+    return binary_decoder_inner(&buf);
+}
+
+// Allocate these on first use as its quite a lot of data on its own lol
+static BYTEWISE_DECODER_NAMES: LazyLock<Box<[((u8, u8), String)]>> = LazyLock::new(|| {
+    let mut names = Vec::with_capacity(255 * 256);
+
+    for zero_byte in u8::MIN..=u8::MAX {
+        for one_byte in u8::MIN..=u8::MAX {
+            if zero_byte == one_byte {
+                continue;
+            }
+
+            let codec_name = format!("binary-0=0x{zero_byte:02x}-1=0x{one_byte:02x}");
+            names.push(((zero_byte, one_byte), codec_name));
+        }
+    }
+
+    names.into()
+});
+
 fn binary_codecs(data: &str) -> Vec<Codec> {
     use std::io::Write;
 
@@ -207,12 +247,33 @@ fn binary_codecs(data: &str) -> Vec<Codec> {
         write!(&mut binary, "{byte:08b}").unwrap();
     }
 
-    let codecs = vec![Codec {
-        encoded: binary.into(),
+    let mut codecs = Vec::with_capacity(255 * 256 + 1);
+    codecs.push(Codec {
+        encoded: binary.clone().into(),
         name: "binary",
         decoder: binary_decoder,
         metadata: None,
-    }];
+    });
+
+    // TODO: decide whether I need to gate this behind a flag if it slows shit down a bunch 😂
+    for (pair @ (zero_byte, one_byte), decoder_name) in BYTEWISE_DECODER_NAMES.iter() {
+        let mut modified_binary = binary.clone();
+        for b in &mut modified_binary {
+            if *b == b'0' {
+                *b = *zero_byte;
+            } else {
+                *b = *one_byte;
+            }
+        }
+
+        codecs.push(Codec {
+            encoded: modified_binary.into(),
+            name: decoder_name.as_str(),
+            decoder: bytewise_binary_decoder,
+            metadata: Some(pair as &dyn ThreadSafeAny),
+        });
+    }
+
     codecs
 }
 
