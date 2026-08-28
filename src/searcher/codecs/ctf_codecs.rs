@@ -10,7 +10,6 @@ fn base10_ascii_decoder(buf: Encoded, _meta: DecoderMetadata) -> MaybeDecoded {
             break;
         }
 
-        dbg!(c, cur);
         cur *= 10;
         cur += c - b'0';
 
@@ -120,9 +119,36 @@ fn hex_decoder(buf: Encoded, _meta: DecoderMetadata) -> MaybeDecoded {
     Some(decoded.into())
 }
 
+fn raw_hex_decoder(mut buf: Encoded, _meta: DecoderMetadata) -> MaybeDecoded {
+    // mutate the buffer into a valid hex string and decode that
+    for b in &mut buf {
+        match *b {
+            0..0xA => {
+                *b += b'0';
+            }
+            0xA..=0xF => {
+                *b += b'a' - 0xA;
+            }
+            _ => {
+                break;
+            }
+        }
+    }
+
+    hex_decoder(buf, None)
+}
+
 fn hex_codecs(data: &str) -> Vec<Codec> {
     let lower_hex = hex::encode(data);
     let upper_hex = hex::encode(data);
+    let raw_hex: Vec<u8> = lower_hex
+        .bytes()
+        .map(|b| match b {
+            b'0'..=b'9' => b - b'0',
+            b'a'..=b'f' => b - b'a' + 0xA,
+            _ => unreachable!("hex encoded data should not contain any other character"),
+        })
+        .collect();
 
     vec![
         Codec {
@@ -135,6 +161,12 @@ fn hex_codecs(data: &str) -> Vec<Codec> {
             encoded: upper_hex.into_bytes().into(),
             name: "hex-upper",
             decoder: hex_decoder,
+            metadata: None,
+        },
+        Codec {
+            encoded: raw_hex.into(),
+            name: "raw-hex",
+            decoder: raw_hex_decoder,
             metadata: None,
         },
     ]
