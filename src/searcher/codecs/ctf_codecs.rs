@@ -101,8 +101,63 @@ fn xor_codecs(data: &str) -> impl Iterator<Item = Codec> {
     })
 }
 
+#[inline(always)]
+fn round_down_to_even(i: usize) -> usize {
+    i & (!1)
+}
+
+fn hex_decoder(buf: Encoded, _meta: DecoderMetadata) -> MaybeDecoded {
+    for (i, c) in buf.iter().enumerate() {
+        if !c.is_ascii_hexdigit() {
+            let decoded = hex::decode(&buf[..round_down_to_even(i)])
+                .expect("aparently is_ascii_hexdigit is wrong?");
+            return Some(decoded.into());
+        }
+    }
+
+    let decoded = hex::decode(&buf[..round_down_to_even(buf.len())])
+        .expect("aparently is_ascii_hexdigit is wrong?");
+    Some(decoded.into())
+}
+
+fn hex_codecs(data: &str) -> Vec<Codec> {
+    let lower_hex = hex::encode(data);
+    let upper_hex = hex::encode(data);
+
+    vec![
+        Codec {
+            encoded: lower_hex.into_bytes().into(),
+            name: "hex-lower",
+            decoder: hex_decoder,
+            metadata: None,
+        },
+        Codec {
+            encoded: upper_hex.into_bytes().into(),
+            name: "hex-upper",
+            decoder: hex_decoder,
+            metadata: None,
+        },
+    ]
+}
+
 pub(super) fn ctf_codecs(data: &str) -> Vec<Codec> {
     let mut codecs = vec![base10_ascii_codec(data)];
     codecs.extend(xor_codecs(data));
+    codecs.extend(hex_codecs(data));
     codecs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_make_even() {
+        assert_eq!(round_down_to_even(0), 0);
+        assert_eq!(round_down_to_even(1), 0);
+        assert_eq!(round_down_to_even(2), 2);
+        assert_eq!(round_down_to_even(3), 2);
+        assert_eq!(round_down_to_even(4), 4);
+        assert_eq!(round_down_to_even(usize::MAX), usize::MAX - 1);
+    }
 }
