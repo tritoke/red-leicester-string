@@ -172,10 +172,55 @@ fn hex_codecs(data: &str) -> Vec<Codec> {
     ]
 }
 
+fn decode_binary_block(block: &[u8; 8]) -> Option<u8> {
+    let mut byte = 0;
+    for b in block {
+        if *b != b'0' && *b != b'1' {
+            return None;
+        }
+
+        byte = (byte << 1) | (*b - b'0');
+    }
+
+    Some(byte)
+}
+
+fn binary_decoder(buf: Encoded, _meta: DecoderMetadata) -> MaybeDecoded {
+    let (buf_blocks, _trailing) = buf.as_chunks::<8>();
+
+    let decoded: Vec<u8> = buf_blocks
+        .iter()
+        .map(decode_binary_block)
+        .take_while(Option::is_some)
+        // SAFETY: we just checked it was Some() 👍
+        .map(|b| unsafe { b.unwrap_unchecked() })
+        .collect();
+
+    Some(decoded.into())
+}
+
+fn binary_codecs(data: &str) -> Vec<Codec> {
+    use std::io::Write;
+
+    let mut binary = Vec::with_capacity(data.as_bytes().len() * 8);
+    for byte in data.as_bytes() {
+        write!(&mut binary, "{byte:08b}").unwrap();
+    }
+
+    let codecs = vec![Codec {
+        encoded: binary.into(),
+        name: "binary",
+        decoder: binary_decoder,
+        metadata: None,
+    }];
+    codecs
+}
+
 pub(super) fn ctf_codecs(data: &str) -> Vec<Codec> {
     let mut codecs = vec![base10_ascii_codec(data)];
     codecs.extend(xor_codecs(data));
     codecs.extend(hex_codecs(data));
+    codecs.extend(binary_codecs(data));
     codecs
 }
 
@@ -184,7 +229,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_make_even() {
+    fn test_round_down_to_even() {
         assert_eq!(round_down_to_even(0), 0);
         assert_eq!(round_down_to_even(1), 0);
         assert_eq!(round_down_to_even(2), 2);
