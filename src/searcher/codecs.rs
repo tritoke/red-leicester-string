@@ -130,67 +130,66 @@ mod base64_codecs {
 
 use base64_codecs::base64_codecs;
 
-// macro_rules! base32_codec {
-//     ($alphabet:expr, $decoder:ident, $codec_name:literal, $codec:ident) => {
-//         fn $decoder(buf: Encoded) -> Decoded {
-//             // take the valid UTF8 prefix of this buffer and attempt to base32 decode that...
-//             let valid_utf8_upto = ::encoding_rs::Encoding::utf8_valid_up_to(&buf);
-//
-//             // SAFETY: we are only asking for the prefix of this byte-array that we have checked as being
-//             // valid UTF8 so it is okay to do this conversion without checks
-//             let to_decode = unsafe { ::std::str::from_utf8_unchecked(&buf[..valid_utf8_upto]) };
-//
-//             ::base32::decode($alphabet, to_decode).map(::std::convert::Into::into)
-//         }
-//
-//         fn $codec(data: &str) -> (Encoded, DecoderName, Decoder) {
-//             let mut encoded = ::base32::encode($alphabet, data.as_bytes());
-//             if encoded.len() % 7 != 0 {
-//                 encoded.pop();
-//             }
-//
-//             (encoded.into_bytes().into(), $codec_name, $decoder)
-//         }
-//     };
-// }
-//
-// base32_codec!(
-//     base32::Alphabet::Crockford,
-//     base32_crockford_decoder,
-//     "base32-crockford",
-//     base32_crockford_codec
-// );
-// base32_codec!(
-//     base32::Alphabet::Rfc4648 { padding: false },
-//     base32_rfc468_decoder,
-//     "base32-RFC-4648",
-//     base32_rfc468_codec
-// );
-// base32_codec!(
-//     base32::Alphabet::Rfc4648Lower { padding: false },
-//     base32_rfc468_lower_decoder,
-//     "base32-RFC-4648-lower",
-//     base32_rfc468_lower_codec
-// );
-// base32_codec!(
-//     base32::Alphabet::Rfc4648Hex { padding: false },
-//     base32_rfc468_hex_decoder,
-//     "base32-RFC-4648-hex",
-//     base32_rfc468_hex_codec
-// );
-// base32_codec!(
-//     base32::Alphabet::Rfc4648HexLower { padding: false },
-//     base32_rfc468_hex_lower_decoder,
-//     "base32-RFC-4648-hex-lower",
-//     base32_rfc468_hex_lower_codec
-// );
-// base32_codec!(
-//     base32::Alphabet::Z,
-//     base32_z_decoder,
-//     "base32-Z",
-//     base32_z_codec
-// );
-//
+mod base32_codecs {
+    use super::*;
+
+    fn base32_decoder(buf: Encoded, meta: DecoderMetadata) -> Decoded {
+        let alphabet = *retrieve_metadata(meta);
+
+        // take the valid UTF8 prefix of this buffer and attempt to base32 decode that...
+        let valid_utf8_upto = ::encoding_rs::Encoding::utf8_valid_up_to(&buf);
+
+        // SAFETY: we are only asking for the prefix of this byte-array that we have checked as being
+        // valid UTF8 so it is okay to do this conversion without checks
+        let to_decode = unsafe { ::std::str::from_utf8_unchecked(&buf[..valid_utf8_upto]) };
+
+        base32::decode(alphabet, to_decode).map(Into::into)
+    }
+
+    const BASE32_ALPHABETS: [(base32::Alphabet, DecoderName); 6] = [
+        (base32::Alphabet::Crockford, "base32-crockford"),
+        (
+            base32::Alphabet::Rfc4648 { padding: false },
+            "base32-RFC-4648",
+        ),
+        (
+            base32::Alphabet::Rfc4648Lower { padding: false },
+            "base32-RFC-4648-lower",
+        ),
+        (
+            base32::Alphabet::Rfc4648Hex { padding: false },
+            "base32-RFC-4648-hex",
+        ),
+        (
+            base32::Alphabet::Rfc4648HexLower { padding: false },
+            "base32-RFC-4648-hex-lower",
+        ),
+        (base32::Alphabet::Z, "base32-Z"),
+    ];
+
+    pub(super) fn base32_codecs(data: &str) -> Vec<Codec> {
+        let mut codecs = Vec::with_capacity(BASE32_ALPHABETS.len());
+        for (alphabet, decoder_name) in BASE32_ALPHABETS {
+            let mut encoded = base32::encode(alphabet, data.as_bytes());
+            // if the pattern does not fill the final base64 octet then we must trim it to just the
+            // prefix that is fully decided by our flag prefix
+            if encoded.len() % 3 != 0 {
+                encoded.pop();
+            }
+            codecs.push(Codec {
+                encoded: encoded.into_bytes().into(),
+                name: decoder_name,
+                decoder: base32_decoder,
+                metadata: Some(Box::leak(Box::new(alphabet))),
+            });
+        }
+
+        codecs
+    }
+}
+
+use base32_codecs::base32_codecs;
+
 // fn utf16_le_decoder(buf: Encoded) -> Decoded {
 //     let decoded = String::from_utf16le_lossy(&buf);
 //     Some(decoded.into_bytes().into())
@@ -356,11 +355,10 @@ use base64_codecs::base64_codecs;
 /// Every codec
 /// NOTE: matches for these are returned in the order they are defined here so less likely / weirder
 /// codecs should be put further down
-pub const ALL_CODEC_GENERATORS: [CodecGenerator; 2] = [
-    // 52] = [
+pub const ALL_CODEC_GENERATORS: [CodecGenerator; 3] = [
     identity_codec,
-    // base64 codecs
     base64_codecs,
+    base32_codecs,
     // base64_urlsafe_codec,
     // base64_bcrypt_codec,
     // base64_binhex_codec,
