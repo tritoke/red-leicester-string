@@ -11,7 +11,7 @@ use codecs::{ALL_CODEC_GENERATORS, DecoderName};
 use strided::Stride;
 
 use crate::searcher::{
-    codecs::{Codec, Decoded, DecoderMetadata, Encoded},
+    codecs::{Codec, DecoderMetadata, Encoded, MaybeDecoded},
     strided_ahocorasick::StridedFindOverlapping,
 };
 
@@ -30,7 +30,7 @@ impl<A> AcAutomaton for A where
 }
 
 struct DecodingContext {
-    decoder: fn(Encoded, DecoderMetadata) -> Decoded,
+    decoder: fn(Encoded, DecoderMetadata) -> MaybeDecoded,
     name: &'static str,
     metadata: DecoderMetadata,
     match_direction: MatchDirection,

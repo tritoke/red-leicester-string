@@ -10,7 +10,7 @@ mod encoding_rs_codecs;
 
 // A set of types for tying together the encoding of data and their decoders
 pub type Encoded = Box<[u8]>;
-pub type Decoded = Option<Box<[u8]>>;
+pub type MaybeDecoded = Option<Box<[u8]>>;
 
 // Any but we can share it safely
 pub trait ThreadSafeAny: Any + Send + Sync {}
@@ -22,7 +22,7 @@ pub type DecoderName = &'static str;
 pub struct Codec {
     pub encoded: Encoded,
     pub name: &'static str,
-    pub decoder: fn(Encoded, DecoderMetadata) -> Decoded,
+    pub decoder: fn(Encoded, DecoderMetadata) -> MaybeDecoded,
     pub metadata: DecoderMetadata,
 }
 pub type CodecGenerator = fn(&str) -> Vec<Codec>;

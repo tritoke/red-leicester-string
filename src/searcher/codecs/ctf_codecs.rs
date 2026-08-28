@@ -1,6 +1,6 @@
 use super::*;
 
-fn base10_ascii_decoder(buf: Encoded, _meta: DecoderMetadata) -> Decoded {
+fn base10_ascii_decoder(buf: Encoded, _meta: DecoderMetadata) -> MaybeDecoded {
     // this is a strict upper bound from the length of buf
     let mut acc = String::with_capacity(buf.len() / 2);
 
@@ -76,7 +76,7 @@ const XOR_CONSTANTS: &'static [(u8, DecoderName)] = &[
     (249, "XOR_249"), (250, "XOR_250"), (251, "XOR_251"), (252, "XOR_252"), (253, "XOR_253"), (254, "XOR_254"), (255, "XOR_255"),
 ];
 
-fn xor_decoder(mut buf: Encoded, meta: DecoderMetadata) -> Decoded {
+fn xor_decoder(mut buf: Encoded, meta: DecoderMetadata) -> MaybeDecoded {
     let xor_constant: &'static u8 = retrieve_metadata(meta);
     for b in &mut buf {
         *b ^= *xor_constant;

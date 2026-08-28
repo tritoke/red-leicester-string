@@ -28,7 +28,7 @@ const BASE64_ENGINES: &'static [(base64::engine::GeneralPurpose, DecoderName)] =
     (IMAP_MUTF7_NO_PAD_INDIFFERENT, "base64-IMAP-modified-UTF7"),
 ];
 
-fn base64_decoder(buf: Encoded, meta: DecoderMetadata) -> Decoded {
+fn base64_decoder(buf: Encoded, meta: DecoderMetadata) -> MaybeDecoded {
     let engine: &base64::engine::GeneralPurpose = retrieve_metadata(meta);
 
     if let Ok(decoded) = engine.decode(&buf) {

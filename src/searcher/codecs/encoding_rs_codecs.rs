@@ -38,7 +38,7 @@ const ENCODINGS: &'static [(&'static encoding_rs::Encoding, &'static str)] = &[
     (encoding_rs::X_USER_DEFINED, "encoding-X_USER_DEFINED"),
 ];
 
-fn encoding_rs_decoder(buf: Encoded, meta: DecoderMetadata) -> Decoded {
+fn encoding_rs_decoder(buf: Encoded, meta: DecoderMetadata) -> MaybeDecoded {
     let encoding: &encoding_rs::Encoding = retrieve_metadata(meta);
     let (decoded, _, _) = encoding.decode(buf.as_ref());
     // Cow -> String -> Vec<[u8]> -> [u8]

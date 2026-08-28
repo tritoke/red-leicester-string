@@ -2,7 +2,7 @@ use base32::Alphabet;
 
 use super::*;
 
-fn base32_decoder(buf: Encoded, meta: DecoderMetadata) -> Decoded {
+fn base32_decoder(buf: Encoded, meta: DecoderMetadata) -> MaybeDecoded {
     let alphabet = *retrieve_metadata(meta);
 
     // take the valid UTF8 prefix of this buffer and attempt to base32 decode that...

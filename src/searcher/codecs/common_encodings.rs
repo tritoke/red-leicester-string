@@ -1,6 +1,6 @@
 use super::*;
 
-fn utf8_decoder(buf: Encoded, _meta: DecoderMetadata) -> Decoded {
+fn utf8_decoder(buf: Encoded, _meta: DecoderMetadata) -> MaybeDecoded {
     Some(buf)
 }
 
@@ -13,7 +13,7 @@ fn utf8_codec(data: &str) -> Codec {
     }
 }
 
-fn utf16_le_decoder(buf: Encoded, _meta: DecoderMetadata) -> Decoded {
+fn utf16_le_decoder(buf: Encoded, _meta: DecoderMetadata) -> MaybeDecoded {
     let decoded = String::from_utf16le_lossy(&buf);
     Some(decoded.into_bytes().into())
 }
@@ -32,7 +32,7 @@ fn utf16_le_codec(data: &str) -> Codec {
     }
 }
 
-fn utf16_be_decoder(buf: Encoded, _meta: DecoderMetadata) -> Decoded {
+fn utf16_be_decoder(buf: Encoded, _meta: DecoderMetadata) -> MaybeDecoded {
     let decoded = String::from_utf16be_lossy(&buf);
     Some(decoded.into_bytes().into())
 }
@@ -51,7 +51,7 @@ fn utf16_be_codec(data: &str) -> Codec {
     }
 }
 
-fn utf32_le_decoder(buf: Encoded, _meta: DecoderMetadata) -> Decoded {
+fn utf32_le_decoder(buf: Encoded, _meta: DecoderMetadata) -> MaybeDecoded {
     let (utf32_byte_pairs, _trailing): (&[[u8; 4]], &[u8]) = buf.as_chunks();
     let decoded: String = utf32_byte_pairs
         .iter()
@@ -77,7 +77,7 @@ fn utf32_le_codec(data: &str) -> Codec {
     }
 }
 
-fn utf32_be_decoder(buf: Encoded, _meta: DecoderMetadata) -> Decoded {
+fn utf32_be_decoder(buf: Encoded, _meta: DecoderMetadata) -> MaybeDecoded {
     let (utf32_byte_pairs, _trailing): (&[[u8; 4]], &[u8]) = buf.as_chunks();
     let decoded: String = utf32_byte_pairs
         .iter()
