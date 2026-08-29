@@ -9,7 +9,10 @@ Strides of the file are also supported:
 
 By default strides up to 32 are searched.
 
-And ofc base64: ZmxhZ3t3ZSBkbyBhIGxpdHRsZSBlbmNvZGluZ30=
+All of the encodings of the original stringcheese tool are now suppored.
+Some examples:
+- base64: ZmxhZ3t3ZSBkbyBhIGxpdHRsZSBlbmNvZGluZ30=
+- ROT47: MSHNb0lT PU 96; y|fffd
 
 Additionally there is `--strict` which will prevent partial flags from being output,
 i.e. flag{ should not be output on its own
