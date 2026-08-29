@@ -373,8 +373,132 @@ fn rot13_codecs(data: &str) -> impl Iterator<Item = Codec> {
     })
 }
 
-fn rot_codecs(data: &str) -> impl Iterator<Item = Codec> {
-    rot13_codecs(data)
+const ROT47_CODEC_PAIRS: &'static [(u8, DecoderName)] = &[
+    (1, "ROT-47-rot=1"),
+    (2, "ROT-47-rot=2"),
+    (3, "ROT-47-rot=3"),
+    (4, "ROT-47-rot=4"),
+    (5, "ROT-47-rot=5"),
+    (6, "ROT-47-rot=6"),
+    (7, "ROT-47-rot=7"),
+    (8, "ROT-47-rot=8"),
+    (9, "ROT-47-rot=9"),
+    (10, "ROT-47-rot=10"),
+    (11, "ROT-47-rot=11"),
+    (12, "ROT-47-rot=12"),
+    (13, "ROT-47-rot=13"),
+    (14, "ROT-47-rot=14"),
+    (15, "ROT-47-rot=15"),
+    (16, "ROT-47-rot=16"),
+    (17, "ROT-47-rot=17"),
+    (18, "ROT-47-rot=18"),
+    (19, "ROT-47-rot=19"),
+    (20, "ROT-47-rot=20"),
+    (21, "ROT-47-rot=21"),
+    (22, "ROT-47-rot=22"),
+    (23, "ROT-47-rot=23"),
+    (24, "ROT-47-rot=24"),
+    (25, "ROT-47-rot=25"),
+    (26, "ROT-47-rot=26"),
+    (27, "ROT-47-rot=27"),
+    (28, "ROT-47-rot=28"),
+    (29, "ROT-47-rot=29"),
+    (30, "ROT-47-rot=30"),
+    (31, "ROT-47-rot=31"),
+    (32, "ROT-47-rot=32"),
+    (33, "ROT-47-rot=33"),
+    (34, "ROT-47-rot=34"),
+    (35, "ROT-47-rot=35"),
+    (36, "ROT-47-rot=36"),
+    (37, "ROT-47-rot=37"),
+    (38, "ROT-47-rot=38"),
+    (39, "ROT-47-rot=39"),
+    (40, "ROT-47-rot=40"),
+    (41, "ROT-47-rot=41"),
+    (42, "ROT-47-rot=42"),
+    (43, "ROT-47-rot=43"),
+    (44, "ROT-47-rot=44"),
+    (45, "ROT-47-rot=45"),
+    (46, "ROT-47-rot=46"),
+    (47, "ROT-47-rot=47"),
+    (48, "ROT-47-rot=48"),
+    (49, "ROT-47-rot=49"),
+    (50, "ROT-47-rot=50"),
+    (51, "ROT-47-rot=51"),
+    (52, "ROT-47-rot=52"),
+    (53, "ROT-47-rot=53"),
+    (54, "ROT-47-rot=54"),
+    (55, "ROT-47-rot=55"),
+    (56, "ROT-47-rot=56"),
+    (57, "ROT-47-rot=57"),
+    (58, "ROT-47-rot=58"),
+    (59, "ROT-47-rot=59"),
+    (60, "ROT-47-rot=60"),
+    (61, "ROT-47-rot=61"),
+    (62, "ROT-47-rot=62"),
+    (63, "ROT-47-rot=63"),
+    (64, "ROT-47-rot=64"),
+    (65, "ROT-47-rot=65"),
+    (66, "ROT-47-rot=66"),
+    (67, "ROT-47-rot=67"),
+    (68, "ROT-47-rot=68"),
+    (69, "ROT-47-rot=69"),
+    (70, "ROT-47-rot=70"),
+    (71, "ROT-47-rot=71"),
+    (72, "ROT-47-rot=72"),
+    (73, "ROT-47-rot=73"),
+    (74, "ROT-47-rot=74"),
+    (75, "ROT-47-rot=75"),
+    (76, "ROT-47-rot=76"),
+    (77, "ROT-47-rot=77"),
+    (78, "ROT-47-rot=78"),
+    (79, "ROT-47-rot=79"),
+    (80, "ROT-47-rot=80"),
+    (81, "ROT-47-rot=81"),
+    (82, "ROT-47-rot=82"),
+    (83, "ROT-47-rot=83"),
+    (84, "ROT-47-rot=84"),
+    (85, "ROT-47-rot=85"),
+    (86, "ROT-47-rot=86"),
+    (87, "ROT-47-rot=87"),
+    (88, "ROT-47-rot=88"),
+    (89, "ROT-47-rot=89"),
+    (90, "ROT-47-rot=90"),
+    (91, "ROT-47-rot=91"),
+    (92, "ROT-47-rot=92"),
+    (93, "ROT-47-rot=93"),
+];
+
+fn rot47_encode(data: &str, rot: u8) -> Box<[u8]> {
+    let mut to_encode = data.as_bytes().to_owned();
+    for c in &mut to_encode {
+        if (b'!'..=b'~').contains(c) {
+            *c = rotate_around(*c, b'!', rot, 94);
+        }
+    }
+
+    to_encode.into()
+}
+
+fn rot47_decode(mut buf: Encoded, meta: DecoderMetadata) -> MaybeDecoded {
+    let rot: u8 = *retrieve_metadata(meta);
+
+    for c in &mut buf {
+        if (b'!'..=b'~').contains(c) {
+            *c = rotate_around(*c, b'!', 94 - rot, 94);
+        }
+    }
+
+    Some(buf)
+}
+
+fn rot47_codecs(data: &str) -> impl Iterator<Item = Codec> {
+    ROT47_CODEC_PAIRS.iter().map(|&(ref rot, name)| Codec {
+        encoded: rot47_encode(data, *rot),
+        name,
+        decoder: rot47_decode,
+        metadata: Some(rot as &dyn ThreadSafeAny),
+    })
 }
 
 pub(super) fn ctf_codecs(data: &str) -> Vec<Codec> {
@@ -382,7 +506,8 @@ pub(super) fn ctf_codecs(data: &str) -> Vec<Codec> {
     codecs.extend(xor_codecs(data));
     codecs.extend(hex_codecs(data));
     codecs.extend(binary_codecs(data));
-    codecs.extend(rot_codecs(data));
+    codecs.extend(rot13_codecs(data));
+    codecs.extend(rot47_codecs(data));
     codecs
 }
 
