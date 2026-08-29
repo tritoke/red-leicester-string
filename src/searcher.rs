@@ -246,8 +246,6 @@ mod tests {
             .flat_map(|pile| searcher.search(pile))
             .collect();
 
-        dbg!(&all_found);
-
         // with more codecs it turns out many codecs can decode the flags so just check that all of
         // the flags are found by the intended codec ignoring if other codecs find them
         for correct_flag in correct {
