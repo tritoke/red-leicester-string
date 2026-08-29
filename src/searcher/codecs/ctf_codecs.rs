@@ -295,11 +295,94 @@ fn binary_codecs(data: &str) -> Vec<Codec> {
     codecs
 }
 
+fn rotate_around(c: u8, base: u8, rot: u8, period: u8) -> u8 {
+    let off = c - base;
+    let new_off = off.wrapping_add(rot) % period;
+    base + new_off
+}
+
+const ROT13_CODEC_PAIRS: &'static [(u8, DecoderName)] = &[
+    (1, "ROT-13-rot=1"),
+    (2, "ROT-13-rot=2"),
+    (3, "ROT-13-rot=3"),
+    (4, "ROT-13-rot=4"),
+    (5, "ROT-13-rot=5"),
+    (6, "ROT-13-rot=6"),
+    (7, "ROT-13-rot=7"),
+    (8, "ROT-13-rot=8"),
+    (9, "ROT-13-rot=9"),
+    (10, "ROT-13-rot=10"),
+    (11, "ROT-13-rot=11"),
+    (12, "ROT-13-rot=12"),
+    (13, "ROT-13-rot=13"),
+    (14, "ROT-13-rot=14"),
+    (15, "ROT-13-rot=15"),
+    (16, "ROT-13-rot=16"),
+    (17, "ROT-13-rot=17"),
+    (18, "ROT-13-rot=18"),
+    (19, "ROT-13-rot=19"),
+    (20, "ROT-13-rot=20"),
+    (21, "ROT-13-rot=21"),
+    (22, "ROT-13-rot=22"),
+    (23, "ROT-13-rot=23"),
+    (24, "ROT-13-rot=24"),
+    (25, "ROT-13-rot=25"),
+];
+
+fn rot13_encode(data: &str, rot: u8) -> Box<[u8]> {
+    let mut to_encode = data.as_bytes().to_owned();
+    for c in &mut to_encode {
+        match *c {
+            b'a'..=b'z' => {
+                *c = rotate_around(*c, b'a', rot, 26);
+            }
+            b'A'..=b'Z' => {
+                *c = rotate_around(*c, b'A', rot, 26);
+            }
+            _ => (),
+        }
+    }
+
+    to_encode.into()
+}
+
+fn rot13_decode(mut buf: Encoded, meta: DecoderMetadata) -> MaybeDecoded {
+    let rot: u8 = *retrieve_metadata(meta);
+
+    for c in &mut buf {
+        match *c {
+            b'a'..=b'z' => {
+                *c = rotate_around(*c, b'a', 26 - rot, 26);
+            }
+            b'A'..=b'Z' => {
+                *c = rotate_around(*c, b'A', 26 - rot, 26);
+            }
+            _ => (),
+        }
+    }
+
+    Some(buf)
+}
+
+fn rot13_codecs(data: &str) -> impl Iterator<Item = Codec> {
+    ROT13_CODEC_PAIRS.iter().map(|&(ref rot, name)| Codec {
+        encoded: rot13_encode(data, *rot),
+        name,
+        decoder: rot13_decode,
+        metadata: Some(rot as &dyn ThreadSafeAny),
+    })
+}
+
+fn rot_codecs(data: &str) -> impl Iterator<Item = Codec> {
+    rot13_codecs(data)
+}
+
 pub(super) fn ctf_codecs(data: &str) -> Vec<Codec> {
     let mut codecs = vec![base10_ascii_codec(data)];
     codecs.extend(xor_codecs(data));
     codecs.extend(hex_codecs(data));
     codecs.extend(binary_codecs(data));
+    codecs.extend(rot_codecs(data));
     codecs
 }
 
@@ -315,5 +398,13 @@ mod tests {
         assert_eq!(round_down_to_even(3), 2);
         assert_eq!(round_down_to_even(4), 4);
         assert_eq!(round_down_to_even(usize::MAX), usize::MAX - 1);
+    }
+
+    #[test]
+    fn test_xor_constant_table_is_correct() {
+        for (i, &(c, name)) in XOR_CONSTANTS.iter().enumerate() {
+            assert_eq!(i + 1, c as usize, "Constants are not in order");
+            assert_eq!(format!("XOR_{c}"), name, "Name doesn't match constant");
+        }
     }
 }
