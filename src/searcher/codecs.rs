@@ -62,7 +62,7 @@ mod tests {
 
         // if we are running in release mode include every codec
         if !cfg!(debug_assertions) {
-            crate::GAMBLE.store(true, std::sync::atomic::Ordering::Relaxed);
+            crate::GAMBLE.with(|gamble| gamble.store(true, std::sync::atomic::Ordering::Relaxed));
         }
 
         for codec_generator in ALL_CODEC_GENERATORS {

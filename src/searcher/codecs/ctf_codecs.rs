@@ -225,7 +225,11 @@ fn bytewise_binary_decoder(mut buf: Encoded, meta: DecoderMetadata) -> MaybeDeco
 static BYTEWISE_DECODER_NAMES: LazyLock<Box<[((u8, u8), String)]>> = LazyLock::new(|| {
     let mut names = Vec::with_capacity(255 * 256);
 
-    let gamble = crate::GAMBLE.load(std::sync::atomic::Ordering::Relaxed);
+    // enable gamble when testing in release mode as well as when --gamble is passed
+    let gamble_flag =
+        crate::GAMBLE.with(|gamble| gamble.load(std::sync::atomic::Ordering::Relaxed));
+    let release_mode_testing = cfg!(all(test, not(debug_assertions)));
+    let gamble = gamble_flag || release_mode_testing;
     for zero_byte in u8::MIN..=u8::MAX {
         for one_byte in u8::MIN..=u8::MAX {
             if zero_byte == one_byte {
@@ -264,6 +268,7 @@ fn binary_codecs(data: &str) -> Vec<Codec> {
         metadata: None,
     });
 
+    let gamble = crate::GAMBLE.with(|gamble| gamble.load(std::sync::atomic::Ordering::Relaxed));
     for (pair @ (zero_byte, one_byte), decoder_name) in BYTEWISE_DECODER_NAMES.iter() {
         let mut modified_binary = binary.clone();
         for b in &mut modified_binary {
@@ -280,6 +285,11 @@ fn binary_codecs(data: &str) -> Vec<Codec> {
             decoder: bytewise_binary_decoder,
             metadata: Some(pair as &dyn ThreadSafeAny),
         });
+
+        // if we aren't gambling then only load the first raw pattern - zero_byte = 0, one_byte = 1.
+        if !gamble {
+            break;
+        }
     }
 
     codecs

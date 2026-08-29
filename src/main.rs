@@ -17,7 +17,11 @@ use searcher::Searcher;
 
 use crate::searcher::MatchDirection;
 
-static GAMBLE: AtomicBool = AtomicBool::new(false);
+// GAMBLE is thread local so that it can be enabled on a per-test basis during testing
+// this is fine for normal use as the main thread is always the thread building the NFA.
+thread_local! {
+    static GAMBLE: AtomicBool = AtomicBool::new(false);
+}
 
 /// Find flags automatically in CTF challenges.
 /// This looks for flags in the provided files using searches similar to strings+grep,
@@ -82,7 +86,7 @@ fn main() -> ExitCode {
     }
 
     if args.gamble {
-        GAMBLE.store(true, std::sync::atomic::Ordering::Relaxed);
+        GAMBLE.with(|gamble| gamble.store(true, std::sync::atomic::Ordering::Relaxed));
     }
 
     let file = File::open(args.file).expect("Failed to open file");
