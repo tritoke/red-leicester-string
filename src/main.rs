@@ -96,7 +96,9 @@ fn main() -> ExitCode {
     let searcher =
         Searcher::new(args.patterns).expect("Failed to build aho-corasick matcher for patterns");
     let took = std::time::Instant::now().duration_since(before);
-    dbg!(took);
+    if args.verbose {
+        eprintln!("Built the automaton in {took:?}")
+    }
 
     if let Some(threads) = args.threads {
         rayon::ThreadPoolBuilder::new()
@@ -157,7 +159,9 @@ fn main() -> ExitCode {
         }
     });
     let took = std::time::Instant::now().duration_since(before);
-    dbg!(took);
+    if args.verbose {
+        eprintln!("Found all flags in {took:?}")
+    }
 
     ExitCode::SUCCESS
 }
