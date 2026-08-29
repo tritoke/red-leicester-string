@@ -1,7 +1,11 @@
 [package]
-name = "red-leicester-string"
+name = "stringcheese"
 version = "0.1.0"
 edition = "2024"
+license = "Apache-2.0"
+description = "The stringcheese CTF tool rewritten in Rust"
+keywords = ["CTF", "encoding", "tools"]
+repository = "https://github.com/tritoke/red-leicester-string"
 
 [dependencies]
 aho-corasick = "1.1.5"
@@ -21,7 +25,3 @@ strided = "0.2.9"
 [dev-dependencies]
 rand = "0.10.2"
 rstest = "0.26.1"
-
-[[bin]]
-name = "stringcheese"
-path = "src/main.rs"
