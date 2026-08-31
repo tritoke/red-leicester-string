@@ -1,4 +1,4 @@
-use clap::{Parser, ValueEnum};
+use clap::{Args, Parser, ValueEnum};
 use core::fmt;
 use lru::LruCache;
 use memmap::Mmap;
@@ -6,7 +6,7 @@ use rayon::prelude::*;
 use std::{
     fs::File,
     num::NonZeroUsize,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::ExitCode,
     sync::{Mutex, atomic::AtomicBool},
 };
@@ -27,14 +27,14 @@ thread_local! {
 /// This looks for flags in the provided files using searches similar to strings+grep,
 /// but works even if the flag is transformed, e.g. encoded or xor-encrypted.
 #[derive(Parser, Debug)]
-struct Args {
-    /// the file in which to search for flags, stdin by default
-    #[clap(short, long)]
-    file: PathBuf,
+struct Cli {
+    #[command(flatten)]
+    haystack: Haystack,
 
-    // TODO: add a -d/--dir option which walks the directory mapping in files and searching for
-    // flags in all files, extra cheese :) and it saves on the cost of creating the NFA as its
-    // shared every time! :D
+    /// the number of directories down to search
+    #[clap(long, requires = "directory")]
+    max_depth: Option<usize>,
+
     /// skip the slow checks. Useful on larger files but you may miss matches
     #[clap(long)]
     fast: bool,
@@ -63,6 +63,21 @@ struct Args {
     /// and can make searching around 4x slower
     #[clap(long, default_value_t = false)]
     gamble: bool,
+    // TODO: support specifying the flag closing character
+    // TODO: support a flag regex as well
+}
+
+/// Defines the haystack we are going to search through
+#[derive(Args, Debug)]
+#[group(required = true, multiple = false)]
+struct Haystack {
+    /// the file in which to search for flags
+    #[clap(short, long)]
+    file: Option<PathBuf>,
+
+    /// the directory to search for flags in
+    #[clap(short, long = "dir")]
+    directory: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, ValueEnum)]
@@ -78,7 +93,7 @@ enum OutputMode {
 }
 
 fn main() -> ExitCode {
-    let args = Args::parse();
+    let args = Cli::parse();
 
     if args.patterns.is_empty() {
         eprintln!("patterns cannot be empty, please provide at least one pattern to search from");
@@ -88,9 +103,6 @@ fn main() -> ExitCode {
     if args.gamble {
         GAMBLE.with(|gamble| gamble.store(true, std::sync::atomic::Ordering::Relaxed));
     }
-
-    let file = File::open(args.file).expect("Failed to open file");
-    let mmap = unsafe { Mmap::map(&file) }.expect("Failed to mmap file");
 
     let before = std::time::Instant::now();
     let searcher =
@@ -107,30 +119,6 @@ fn main() -> ExitCode {
             .expect("Failed to build threadpool");
     }
 
-    let haystack = Stride::new(&mmap[..]);
-
-    let max_stride = if args.fast { 8 } else { 32 };
-    let mut piles = Vec::with_capacity(triangle(max_stride));
-
-    for stride in 1..=max_stride {
-        piles.extend(haystack.substrides(stride).enumerate());
-    }
-
-    let flags = piles.into_par_iter().flat_map_iter(|(offset, pile)| {
-        let stride = pile.stride();
-        searcher
-            .search(pile)
-            .map(move |(flag, decoder_name, match_direction)| Finding {
-                flag,
-                context: FlagContext {
-                    decoder_name,
-                    match_direction,
-                    offset,
-                    stride,
-                },
-            })
-    });
-
     // ensure we don't spam too much with all the various encodings
     let cache_size = if args.verbose {
         // we don't cache seen flags in verbose mode
@@ -142,28 +130,141 @@ fn main() -> ExitCode {
     };
     let seen_flags = Mutex::new(LruCache::new(cache_size));
 
+    let ctx = SearchContext {
+        fast: args.fast,
+        verbose: args.verbose,
+        strict: args.strict,
+        seen_flags,
+        searcher,
+        output: args.output,
+    };
+
     let before = std::time::Instant::now();
-    flags.for_each(|finding| {
-        if args.strict && !finding.flag.ends_with('}') {
-            return;
+
+    let exit_code = if let Some(file) = args.haystack.file {
+        ctx.search(file)
+    } else {
+        let dir = args
+            .haystack
+            .directory
+            .expect("clap forgot how to require arguments?");
+
+        let mut walker = walkdir::WalkDir::new(dbg!(dir)).follow_links(true);
+        if let Some(depth) = args.max_depth {
+            walker = walker.max_depth(depth);
         }
 
-        if let Ok(mut seen) = seen_flags.lock() {
-            // report the flag if we are in verbose mode or if the flag is unseen recently
-            if args.verbose || seen.put(finding.flag.clone(), ()).is_none() {
-                args.output.report(finding);
+        let mut exit_code = ExitCode::SUCCESS;
+        for dir_entry in walker {
+            let dir_entry = match dir_entry {
+                Ok(de) => de,
+                Err(e) => {
+                    eprintln!("{e}");
+                    continue;
+                }
+            };
+
+            let Ok(meta) = dir_entry.metadata() else {
+                continue;
+            };
+
+            // skip non-files and empty files
+            if !meta.is_file() || meta.len() == 0 {
+                continue;
             }
-        } else {
-            eprintln!("Failed to acquire lock for seen flags, reporting all flags...");
-            args.output.report(finding);
+
+            if ctx.search(dir_entry.path()) != ExitCode::SUCCESS {
+                exit_code = ExitCode::FAILURE;
+            }
         }
-    });
+
+        exit_code
+    };
+
     let took = std::time::Instant::now().duration_since(before);
     if args.verbose {
         eprintln!("Found all flags in {took:?}")
     }
 
-    ExitCode::SUCCESS
+    exit_code
+}
+
+struct SearchContext {
+    fast: bool,
+    verbose: bool,
+    strict: bool,
+    seen_flags: Mutex<LruCache<String, ()>>,
+    searcher: Searcher,
+    output: OutputMode,
+}
+
+impl SearchContext {
+    fn search(&self, file_name: impl AsRef<Path>) -> ExitCode {
+        let file_name = file_name.as_ref();
+
+        let file = match File::open(file_name) {
+            Ok(file) => file,
+            Err(e) => {
+                eprintln!("Failed to open {}: {e}", file_name.display());
+                return ExitCode::FAILURE;
+            }
+        };
+
+        let mmap = match unsafe { Mmap::map(&file) } {
+            Ok(mmap) => mmap,
+            Err(e) => {
+                eprintln!("Failed to mmap {}: {e}", file_name.display());
+                return ExitCode::FAILURE;
+            }
+        };
+
+        let haystack = Stride::new(&mmap[..]);
+
+        let max_stride = if self.fast { 8 } else { 32 };
+        let mut piles = Vec::with_capacity(triangle(max_stride));
+        for stride in 1..=max_stride {
+            piles.extend(haystack.substrides(stride).enumerate());
+        }
+
+        let flags = piles.into_par_iter().flat_map_iter(|(offset, pile)| {
+            let stride = pile.stride();
+            self.searcher
+                .search(pile)
+                .map(move |(flag, decoder_name, match_direction)| Finding {
+                    flag,
+                    context: FlagContext {
+                        decoder_name,
+                        match_direction,
+                        offset,
+                        stride,
+                    },
+                })
+        });
+
+        let before = std::time::Instant::now();
+        flags.for_each(|finding| {
+            if self.strict && !finding.flag.ends_with('}') {
+                return;
+            }
+
+            if let Ok(mut seen) = self.seen_flags.lock() {
+                // report the flag if we are in verbose mode or if the flag is unseen recently
+                if self.verbose || seen.put(finding.flag.clone(), ()).is_none() {
+                    self.output.report(finding, file_name);
+                }
+            } else {
+                eprintln!("Failed to acquire lock for seen flags, reporting all flags...");
+                self.output.report(finding, file_name);
+            }
+        });
+        let took = std::time::Instant::now().duration_since(before);
+
+        if self.verbose {
+            eprintln!("[{}] Finished search in {took:?}", file_name.display());
+        }
+
+        ExitCode::SUCCESS
+    }
 }
 
 fn triangle(n: usize) -> usize {
@@ -219,17 +320,19 @@ impl Finding {
 }
 
 impl OutputMode {
-    fn report(&self, finding: Finding) {
+    fn report(&self, finding: Finding, file: &Path) {
         match self {
             OutputMode::FlagOnly => {
                 println!("{}", finding.flag);
             }
             OutputMode::WithContext => {
-                println!("{}:", finding.context);
+                println!("[{}] {}:", file.display(), finding.context);
                 println!("{}", finding.flag);
             }
             OutputMode::JsonLines => {
-                println!("{}", finding.to_json());
+                let mut json = finding.to_json();
+                json["file"] = serde_json::Value::String(file.display().to_string());
+                println!("{}", json);
             }
         }
     }
