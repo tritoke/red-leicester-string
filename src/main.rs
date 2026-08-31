@@ -3,6 +3,7 @@ use core::fmt;
 use lru::LruCache;
 use memmap::Mmap;
 use rayon::prelude::*;
+use regex::Regex;
 use std::{
     fs::File,
     num::NonZeroUsize,
@@ -65,9 +66,12 @@ struct Cli {
     gamble: bool,
 
     /// The string to look for instead of } when operating in strict mode.
-    #[clap(long = "closing", default_value = "}")]
+    #[clap(long = "closing", default_value = "}", requires = "strict")]
     closing_character: String,
-    // TODO: support a flag regex as well
+
+    /// Only display flags matching this regex
+    #[clap(long)]
+    flag_regex: Option<String>,
 }
 
 /// Defines the haystack we are going to search through
@@ -133,17 +137,28 @@ fn main() -> ExitCode {
     };
     let seen_flags = Mutex::new(LruCache::new(cache_size));
 
+    let flag_regex = match args.flag_regex {
+        Some(regex) => match Regex::new(&regex) {
+            Ok(regex) => Some(regex),
+            Err(e) => {
+                eprintln!("Failed to build flag regex: {e}");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => None,
+    };
     let ctx = SearchContext {
         fast: args.fast,
         verbose: args.verbose,
         strict: args.strict,
         seen_flags,
         searcher,
+        flag_regex,
+        closing: args.closing_character,
         output: args.output,
     };
 
     let before = std::time::Instant::now();
-
     let exit_code = if let Some(file) = args.haystack.file {
         ctx.search(file)
     } else {
@@ -198,6 +213,8 @@ struct SearchContext {
     strict: bool,
     seen_flags: Mutex<LruCache<String, ()>>,
     searcher: Searcher,
+    closing: String,
+    flag_regex: Option<Regex>,
     output: OutputMode,
 }
 
@@ -246,7 +263,13 @@ impl SearchContext {
 
         let before = std::time::Instant::now();
         flags.for_each(|finding| {
-            if self.strict && !finding.flag.ends_with('}') {
+            if self.strict && !finding.flag.ends_with(&self.closing) {
+                return;
+            }
+
+            if let Some(re) = &self.flag_regex
+                && !re.is_match(&finding.flag)
+            {
                 return;
             }
 

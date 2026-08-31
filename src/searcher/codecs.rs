@@ -36,6 +36,8 @@ fn retrieve_metadata<T>(meta: DecoderMetadata) -> &'static T {
         .expect("metadata was the wrong type")
 }
 
+// TODO: Add URL encoding
+
 // NOTE: matches for these are returned in the order they are defined here so less likely / weirder
 // codecs should be put further down
 pub const ALL_CODEC_GENERATORS: &'static [CodecGenerator] = &[

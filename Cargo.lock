@@ -595,6 +595,7 @@ dependencies = [
  "memmap",
  "rand",
  "rayon",
+ "regex",
  "rstest",
  "serde_json",
  "strided",
