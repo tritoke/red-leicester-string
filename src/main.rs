@@ -63,7 +63,10 @@ struct Cli {
     /// and can make searching around 4x slower
     #[clap(long, default_value_t = false)]
     gamble: bool,
-    // TODO: support specifying the flag closing character
+
+    /// The string to look for instead of } when operating in strict mode.
+    #[clap(long = "closing", default_value = "}")]
+    closing_character: String,
     // TODO: support a flag regex as well
 }
 
@@ -105,8 +108,8 @@ fn main() -> ExitCode {
     }
 
     let before = std::time::Instant::now();
-    let searcher =
-        Searcher::new(args.patterns).expect("Failed to build aho-corasick matcher for patterns");
+    let searcher = Searcher::new(args.patterns, &args.closing_character)
+        .expect("Failed to build aho-corasick matcher for patterns");
     let took = std::time::Instant::now().duration_since(before);
     if args.verbose {
         eprintln!("Built the automaton in {took:?}")

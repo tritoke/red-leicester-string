@@ -8,6 +8,7 @@ use aho_corasick::{Match, automaton::Automaton, nfa};
 
 mod codecs;
 use codecs::{ALL_CODEC_GENERATORS, DecoderName};
+use memchr::memmem;
 use strided::Stride;
 
 use crate::searcher::{
@@ -18,7 +19,6 @@ use crate::searcher::{
 mod strided_ahocorasick;
 
 const MAX_FLAG_LENGTH: usize = 2000;
-const CLOSING_CHAR: u8 = b'}';
 
 // Also nicked from burntsushi (if you ever read this thanks for writing an awesome library
 // this has been a joy to work on!)
@@ -40,11 +40,13 @@ pub struct Searcher {
     matcher: Arc<dyn AcAutomaton>,
     decoder_mapping: Vec<DecodingContext>,
     unexpanded: Box<[String]>,
+    closing_char: memmem::Finder<'static>,
 }
 
 impl Searcher {
     pub fn new(
         patterns: impl IntoIterator<Item = impl AsRef<str>>,
+        closing_char: &str,
     ) -> Result<Self, aho_corasick::BuildError> {
         let unexpanded: Vec<_> = patterns
             .into_iter()
@@ -65,10 +67,13 @@ impl Searcher {
             Err(_) => Arc::new(nnfa),
         };
 
+        let closing_char = memmem::Finder::new(closing_char).into_owned();
+
         Ok(Self {
             matcher,
             decoder_mapping,
             unexpanded: unexpanded.into(),
+            closing_char,
         })
     }
 
@@ -144,7 +149,7 @@ impl Searcher {
                 Some((decoded, name, match_direction))
             })
             .map(|(decoded, name, direction)| {
-                let flag = Self::postprocess_match(decoded);
+                let flag = Self::postprocess_match(decoded, self.closing_char.as_ref());
                 (flag, name, direction)
             })
             .filter(|(flag, _, _)| {
@@ -179,11 +184,11 @@ impl Searcher {
         }
     }
 
-    fn postprocess_match(extended_match_data: Box<[u8]>) -> String {
+    fn postprocess_match(extended_match_data: Box<[u8]>, closing_char: memmem::Finder) -> String {
         // compute where is valid UTF8 / where the closing brace is
         let haystack = extended_match_data.as_ref();
         let utf8_valid_end = encoding_rs::Encoding::utf8_valid_up_to(haystack);
-        let closing_pos = memchr::memchr(CLOSING_CHAR, &haystack).unwrap_or(utf8_valid_end);
+        let closing_pos = closing_char.find(haystack).unwrap_or(utf8_valid_end);
 
         // closing_pos is incremented as utf8_valid_end is an index valid for [..<to>] style
         // indexing but closing_pos is valid for [..=<to>] style indexing and this lets us use both
@@ -238,7 +243,7 @@ mod tests {
         #[case] correct: &[&str],
         #[case] correct_direction: MatchDirection,
     ) {
-        let searcher = Searcher::new(["flag{"]).unwrap();
+        let searcher = Searcher::new(["flag{"], "}").unwrap();
 
         let haystack = Stride::new(haystack.as_ref());
         let all_found: Vec<(String, DecoderName, MatchDirection)> = haystack
@@ -287,7 +292,7 @@ mod tests {
         ]
     )]
     fn test_codecs(#[case] haystack: impl AsRef<[u8]>, #[case] correct: &[(&str, &str)]) {
-        let searcher = Searcher::new(["flag{"]).unwrap();
+        let searcher = Searcher::new(["flag{"], "}").unwrap();
         let haystack = Stride::new(haystack.as_ref());
         let found: Vec<_> = searcher.search(haystack).collect();
         assert_eq!(found.len(), correct.len(), "Found: {found:?}");
@@ -309,7 +314,7 @@ mod tests {
         let mut rng = rand::rng();
         buf.resize(buf.capacity(), 0);
 
-        let searcher = Searcher::new(["flag{"]).unwrap();
+        let searcher = Searcher::new(["flag{"], "}").unwrap();
 
         let correct = "flag{big_stripe}";
         for stride in 2..(buf.len() / 2) / correct.len() {
